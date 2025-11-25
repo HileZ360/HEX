@@ -1,19 +1,177 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { TryOn2DModal } from '../components/TryOn2DModal';
 import { TryOn3DModal } from '../components/TryOn3DModal';
-import { Camera, Box, ShoppingBag, Heart, Share2, Sparkles, ArrowLeft } from 'lucide-react';
+import { Camera, Box, Heart, Share2, Sparkles, ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+
+type ParsedProduct = {
+  title: string;
+  article?: string;
+  price?: number;
+  originalPrice?: number;
+  discount?: number;
+  images: string[];
+  similar: { title?: string; price?: number; image?: string }[];
+  sizes: string[];
+  recommendedSize?: string;
+  recommendationConfidence?: number;
+  fitNotes?: string[];
+  marketplace?: string;
+};
 
 export default function TryOnPage() {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const initialUrl = (location.state as { url?: string } | null)?.url ?? searchParams.get('url') ?? '';
+
   const [activeTab, setActiveTab] = useState<'2d' | '3d'>('2d');
   const [is2DModalOpen, setIs2DModalOpen] = useState(false);
   const [is3DModalOpen, setIs3DModalOpen] = useState(false);
   const [selectedSize, setSelectedSize] = useState('M');
+  const [product, setProduct] = useState<ParsedProduct | null>(null);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [sizeRecommendation, setSizeRecommendation] = useState<{
+    size: string;
+    confidence?: number;
+    source?: string;
+    tips?: string[];
+  } | null>(null);
+  const [tryOnPreview, setTryOnPreview] = useState<{ mode: '2d' | '3d'; image?: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const formatPrice = (value?: number) =>
+    typeof value === 'number' ? value.toLocaleString('ru-RU') : undefined;
+
+  const normalizeProductResponse = (data: any): ParsedProduct => {
+    const price = Number(data?.price?.current ?? data?.price ?? data?.pricing?.price);
+    const originalPrice = Number(
+      data?.price?.original ?? data?.pricing?.original ?? data?.price?.base ?? undefined
+    );
+    const discount =
+      data?.discount ??
+      data?.price?.discount ??
+      (price && originalPrice ? Math.round((1 - price / originalPrice) * 100) : undefined);
+    const images = data?.media?.images ?? data?.images ?? data?.gallery ?? [];
+    const similar = data?.similar ?? data?.recommendations ?? data?.similarProducts ?? [];
+    const sizes = data?.size_chart?.sizes ?? data?.sizes ?? data?.sizeChart?.sizes ?? [];
+    const recommendedSize = data?.recommendation?.size ?? data?.sizeRecommendation?.size ?? data?.recommendedSize;
+    const recommendationConfidence =
+      data?.recommendation?.confidence ?? data?.sizeRecommendation?.confidence ?? data?.recommendationConfidence;
+
+    return {
+      title: data?.title ?? data?.name ?? 'Товар',
+      article: data?.article ?? data?.sku ?? data?.vendorCode,
+      price: Number.isFinite(price) ? price : undefined,
+      originalPrice: Number.isFinite(originalPrice) ? originalPrice : undefined,
+      discount: Number.isFinite(discount) ? discount : undefined,
+      images: Array.isArray(images) ? images : [],
+      similar: Array.isArray(similar) ? similar : [],
+      sizes: Array.isArray(sizes) ? sizes.map(String) : [],
+      recommendedSize,
+      recommendationConfidence,
+      fitNotes: data?.recommendation?.notes ?? data?.fitNotes ?? [],
+      marketplace: data?.marketplace ?? data?.source,
+    };
+  };
+
+  useEffect(() => {
+    if (!initialUrl) {
+      setError('Ссылка на товар не передана. Вернитесь на главную и вставьте URL.');
+      return;
+    }
+
+    try {
+      new URL(initialUrl);
+    } catch {
+      setError('Некорректный URL. Проверьте ссылку с маркетплейса.');
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchProduct = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/product/parse?url=${encodeURIComponent(initialUrl)}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error('Маркетплейс недоступен или ссылка не поддерживается.');
+        }
+
+        const data = await response.json();
+        const parsed = normalizeProductResponse(data);
+
+        setProduct(parsed);
+        setSelectedImageIndex(0);
+
+        if (parsed.recommendedSize) {
+          setSelectedSize(parsed.recommendedSize);
+          setSizeRecommendation({
+            size: parsed.recommendedSize,
+            confidence: parsed.recommendationConfidence,
+            source: 'HEX AI',
+            tips: parsed.fitNotes,
+          });
+        } else if (parsed.sizes?.length) {
+          setSelectedSize(parsed.sizes[0]);
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        setProduct(null);
+        setError(err?.message || 'Не удалось загрузить данные товара.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProduct();
+
+    return () => controller.abort();
+  }, [initialUrl]);
+
+  const productImages = useMemo(() => product?.images?.filter(Boolean) ?? [], [product]);
+  const availableSizes = useMemo(() => product?.sizes?.length ? product.sizes : ['XS', 'S', 'M', 'L', 'XL'], [product]);
+
+  const previewImage = useMemo(() => {
+    if (activeTab === '2d' && tryOnPreview?.mode === '2d' && tryOnPreview.image) return tryOnPreview.image;
+    if (activeTab === '3d' && tryOnPreview?.mode === '3d' && tryOnPreview.image) return tryOnPreview.image;
+
+    return productImages[selectedImageIndex] ??
+      'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=1200&q=80';
+  }, [activeTab, productImages, selectedImageIndex, tryOnPreview]);
+
+  const handleTryOnComplete = (result: { mode: '2d' | '3d'; image?: string; recommendedSize?: string; confidence?: number }) => {
+    if (result.image) {
+      setTryOnPreview({ mode: result.mode, image: result.image });
+    }
+
+    const nextSize = result.recommendedSize ?? product?.recommendedSize ?? selectedSize;
+    if (nextSize) {
+      setSelectedSize(nextSize);
+      setSizeRecommendation({
+        size: nextSize,
+        confidence: result.confidence ?? product?.recommendationConfidence,
+        source: result.mode === '2d' ? '2D примерка' : '3D подбор',
+        tips: product?.fitNotes,
+      });
+    }
+
+    if (result.mode === '2d') {
+      setIs2DModalOpen(false);
+    } else {
+      setIs3DModalOpen(false);
+    }
+  };
 
   return (
     <Layout>
@@ -24,6 +182,28 @@ export default function TryOnPage() {
             Вернуться назад
           </Link>
         </div>
+
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-100 rounded-2xl p-5 flex items-start gap-3 text-red-700">
+            <AlertTriangle className="w-5 h-5 mt-0.5" />
+            <div>
+              <p className="font-semibold">{error}</p>
+              <p className="text-sm mt-1 text-red-600">Попробуйте другую ссылку или повторите попытку позже.</p>
+            </div>
+          </div>
+        )}
+
+        {!error && (
+          <div className="mb-6 bg-white border border-gray-100 rounded-2xl p-5 flex items-center justify-between shadow-sm">
+            <div>
+              <p className="text-xs uppercase text-gray-400 font-semibold">Товар</p>
+              <p className="text-sm font-medium text-hex-dark break-all">{initialUrl}</p>
+            </div>
+            <div className="flex items-center gap-3 text-sm font-semibold text-hex-primary">
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}<span>{loading ? 'Загружаем...' : 'Готово'}</span>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col lg:flex-row gap-12 h-auto lg:h-[calc(100vh-12rem)] min-h-[700px]">
           
@@ -61,15 +241,18 @@ export default function TryOnPage() {
 
             {/* Main Preview Area */}
             <div className="flex-grow bg-white rounded-[2.5rem] shadow-card overflow-hidden relative group border border-gray-100">
-              <img 
-                src={activeTab === '2d' 
-                  ? "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=1200&q=80" 
-                  : "https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=1200&q=80"
-                }
-                alt="Try On Preview" 
+              <img
+                src={previewImage}
+                alt={product?.title || 'Try On Preview'}
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               />
-              
+
+              {loading && (
+                <div className="absolute inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-hex-primary animate-spin" />
+                </div>
+              )}
+
               {/* Overlay Controls */}
               <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0">
                 <div className="flex gap-3">
@@ -88,11 +271,18 @@ export default function TryOnPage() {
 
             {/* Thumbnails */}
             <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
-              {[1, 2, 3].map((i) => (
-                <button key={i} className="w-24 h-24 rounded-2xl overflow-hidden border-2 border-transparent hover:border-hex-primary transition-all hover:-translate-y-1 shadow-sm hover:shadow-md flex-shrink-0">
-                  <img 
-                    src={`https://images.unsplash.com/photo-${1500000000000 + i}?w=200&q=80`} 
-                    alt={`Variant ${i}`}
+              {(productImages.length ? productImages : [previewImage]).map((src, index) => (
+                <button
+                  key={src + index}
+                  onClick={() => setSelectedImageIndex(index)}
+                  className={clsx(
+                    "w-24 h-24 rounded-2xl overflow-hidden border-2 transition-all hover:-translate-y-1 shadow-sm hover:shadow-md flex-shrink-0",
+                    selectedImageIndex === index ? 'border-hex-primary' : 'border-transparent hover:border-hex-primary'
+                  )}
+                >
+                  <img
+                    src={src}
+                    alt={`Variant ${index + 1}`}
                     className="w-full h-full object-cover"
                   />
                 </button>
@@ -109,43 +299,65 @@ export default function TryOnPage() {
           >
             {/* Product Info */}
             <div className="bg-white p-8 rounded-[2.5rem] shadow-soft border border-gray-100">
-              <div className="flex justify-between items-start mb-6">
+              <div className="flex justify-between items-start mb-6 gap-4">
                 <div>
-                  <h1 className="text-3xl font-extrabold text-hex-dark mb-2 leading-tight">Платье миди с цветочным принтом</h1>
-                  <p className="text-hex-gray font-medium">Артикул: 12345678</p>
+                  <h1 className="text-3xl font-extrabold text-hex-dark mb-2 leading-tight">
+                    {product?.title ?? 'Загружаем товар...'}
+                  </h1>
+                  <p className="text-hex-gray font-medium">
+                    {product?.article ? `Артикул: ${product.article}` : 'Артикул уточняется'}
+                  </p>
                 </div>
-                <div className="text-right">
-                  <span className="text-3xl font-bold text-hex-primary block">3 490 ₽</span>
-                  <span className="text-base text-gray-400 line-through font-medium">4 990 ₽</span>
+                <div className="text-right space-y-1">
+                  <span className="text-3xl font-bold text-hex-primary block">
+                    {product?.price ? `${formatPrice(product.price)} ₽` : '—'}
+                  </span>
+                  {product?.originalPrice && (
+                    <span className="text-base text-gray-400 line-through font-medium">
+                      {formatPrice(product.originalPrice)} ₽
+                    </span>
+                  )}
+                  {product?.discount && (
+                    <Badge className="bg-hex-primary/10 text-hex-primary border border-hex-primary/30">
+                      -{product.discount}%
+                    </Badge>
+                  )}
                 </div>
               </div>
 
               {/* Sizes */}
               <div className="mb-8">
-                <div className="flex justify-between mb-4">
+                <div className="flex justify-between mb-4 items-center">
                   <span className="text-base font-bold text-hex-dark">Выберите размер</span>
-                  <a href="#" className="text-sm text-hex-primary font-semibold hover:underline">Таблица размеров</a>
+                  <span className="text-sm text-hex-primary font-semibold">
+                    {product?.marketplace ?? 'Маркетплейс'}
+                  </span>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  {['XS', 'S', 'M', 'L', 'XL'].map((size) => (
+                  {availableSizes.map((size) => (
                     <button
                       key={size}
                       onClick={() => setSelectedSize(size)}
+                      disabled={loading}
                       className={clsx(
                         "w-14 h-14 rounded-2xl font-bold text-lg transition-all flex items-center justify-center relative",
                         selectedSize === size
                           ? "bg-hex-dark text-white shadow-lg scale-105"
-                          : "bg-gray-50 text-hex-dark hover:bg-gray-100 hover:scale-105"
+                          : "bg-gray-50 text-hex-dark hover:bg-gray-100 hover:scale-105",
+                        loading && "opacity-60 cursor-not-allowed"
                       )}
                     >
                       {size}
-                      {size === 'M' && (
+                      {sizeRecommendation?.size === size && (
                         <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-green-500 rounded-full border-2 border-white shadow-sm flex items-center justify-center">
                           <Check size={10} className="text-white" />
                         </span>
                       )}
                     </button>
                   ))}
+                  {!availableSizes.length && (
+                    <span className="text-sm text-hex-gray">Размерная сетка недоступна</span>
+                  )}
                 </div>
               </div>
 
@@ -183,27 +395,53 @@ export default function TryOnPage() {
 
               {/* AI Recommendation */}
               <div className="border border-green-100 bg-green-50/50 rounded-3xl p-6 mb-8">
-                <div className="flex items-center gap-3 mb-4">
-                  <Badge variant="success" className="px-3 py-1 text-sm">Рекомендуем M</Badge>
-                  <span className="text-sm text-green-700 font-bold">98% совпадение</span>
-                </div>
-                <p className="text-sm text-hex-gray mb-4 font-medium leading-relaxed">
-                  По вашим параметрам и отзывам похожих пользователей, этот размер сядет идеально.
-                </p>
-                <div className="flex gap-2">
-                  {['По груди', 'По талии', 'По длине'].map((label) => (
-                    <span key={label} className="text-[11px] font-semibold px-3 py-1.5 bg-white rounded-lg text-gray-500 border border-gray-100 shadow-sm">
-                      {label}: ok
-                    </span>
-                  ))}
-                </div>
+                {sizeRecommendation ? (
+                  <>
+                    <div className="flex items-center gap-3 mb-4">
+                      <Badge variant="success" className="px-3 py-1 text-sm">
+                        Рекомендуем {sizeRecommendation.size}
+                      </Badge>
+                      {sizeRecommendation.confidence && (
+                        <span className="text-sm text-green-700 font-bold">
+                          {Math.round(
+                            (sizeRecommendation.confidence <= 1
+                              ? sizeRecommendation.confidence * 100
+                              : sizeRecommendation.confidence)
+                          )}% совпадение
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-hex-gray mb-4 font-medium leading-relaxed">
+                      {sizeRecommendation.source
+                        ? `Размер подобран на основе ${sizeRecommendation.source}.`
+                        : 'AI подобрал размер на основе ваших действий.'}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(sizeRecommendation.tips?.length ? sizeRecommendation.tips : ['По груди', 'По талии', 'По длине']).map((label) => (
+                        <span key={label} className="text-[11px] font-semibold px-3 py-1.5 bg-white rounded-lg text-gray-500 border border-gray-100 shadow-sm">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-start gap-3 text-hex-gray">
+                    <Sparkles className="w-5 h-5 text-hex-primary mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-hex-dark">Запустите 2D или 3D примерку</p>
+                      <p className="text-sm">После примерки мы покажем рекомендуемый размер и подсказки по посадке.</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* CTA */}
               <div className="space-y-4">
                 <Button size="lg" className="w-full justify-between group text-lg py-5 shadow-violet-500/20">
                   <span>Добавить в корзину</span>
-                  <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-semibold backdrop-blur-sm">Wildberries</span>
+                  <span className="bg-white/20 px-3 py-1 rounded-lg text-sm font-semibold backdrop-blur-sm">
+                    {product?.marketplace ?? 'Маркетплейс'}
+                  </span>
                 </Button>
                 <Button variant="secondary" className="w-full py-5 text-lg font-semibold">
                   Сохранить образ
@@ -214,36 +452,52 @@ export default function TryOnPage() {
             {/* Similar Items */}
             <div>
               <h3 className="font-bold text-hex-dark mb-5 text-xl">Похожие образы</h3>
-              <div className="grid grid-cols-2 gap-5">
-                {[1, 2].map((i) => (
-                  <div key={i} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex gap-4 items-center cursor-pointer hover:border-hex-primary/30 hover:shadow-md transition-all group">
-                    <img 
-                      src={`https://images.unsplash.com/photo-${1500000000000 + i}?w=100&q=80`} 
-                      alt="Similar" 
-                      className="w-20 h-24 object-cover rounded-xl group-hover:scale-105 transition-transform duration-300"
-                    />
-                    <div>
-                      <div className="text-sm font-bold text-hex-dark mb-1 group-hover:text-hex-primary transition-colors">Блузка</div>
-                      <div className="text-sm text-hex-primary font-extrabold">2 100 ₽</div>
+              {product?.similar?.length ? (
+                <div className="grid grid-cols-2 gap-5">
+                  {product.similar.map((item, index) => (
+                    <div key={(item.title ?? '') + index} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex gap-4 items-center cursor-pointer hover:border-hex-primary/30 hover:shadow-md transition-all group">
+                      <img
+                        src={item.image ?? productImages[index % (productImages.length || 1)] ?? previewImage}
+                        alt={item.title ?? 'Similar'}
+                        className="w-20 h-24 object-cover rounded-xl group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <div>
+                        <div className="text-sm font-bold text-hex-dark mb-1 group-hover:text-hex-primary transition-colors">
+                          {item.title ?? `Образ ${index + 1}`}
+                        </div>
+                        {item.price && (
+                          <div className="text-sm text-hex-primary font-extrabold">{formatPrice(item.price)} ₽</div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-hex-gray">Мы покажем похожие образы после загрузки товара.</p>
+              )}
             </div>
           </motion.div>
         </div>
       </div>
 
-      <TryOn2DModal 
-        isOpen={is2DModalOpen} 
-        onClose={() => setIs2DModalOpen(false)} 
-        onComplete={() => setIs2DModalOpen(false)} 
+      <TryOn2DModal
+        isOpen={is2DModalOpen}
+        onClose={() => setIs2DModalOpen(false)}
+        suggestedSize={sizeRecommendation?.size ?? product?.recommendedSize ?? selectedSize}
+        suggestedConfidence={sizeRecommendation?.confidence ?? product?.recommendationConfidence}
+        onComplete={({ image, recommendedSize, confidence }) =>
+          handleTryOnComplete({ mode: '2d', image, recommendedSize, confidence })
+        }
       />
-      
-      <TryOn3DModal 
-        isOpen={is3DModalOpen} 
-        onClose={() => setIs3DModalOpen(false)} 
-        onComplete={() => setIs3DModalOpen(false)} 
+
+      <TryOn3DModal
+        isOpen={is3DModalOpen}
+        onClose={() => setIs3DModalOpen(false)}
+        suggestedSize={sizeRecommendation?.size ?? product?.recommendedSize ?? selectedSize}
+        suggestedConfidence={sizeRecommendation?.confidence ?? product?.recommendationConfidence}
+        onComplete={({ recommendedSize, confidence }) =>
+          handleTryOnComplete({ mode: '3d', recommendedSize, confidence })
+        }
       />
     </Layout>
   );

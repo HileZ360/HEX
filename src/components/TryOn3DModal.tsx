@@ -8,10 +8,12 @@ import { clsx } from 'clsx';
 interface TryOn3DModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onComplete: () => void;
+  onComplete: (payload: { recommendedSize?: string; confidence?: number }) => void;
+  suggestedSize?: string;
+  suggestedConfidence?: number;
 }
 
-export function TryOn3DModal({ isOpen, onClose, onComplete }: TryOn3DModalProps) {
+export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, suggestedConfidence }: TryOn3DModalProps) {
   const [step, setStep] = useState<1 | 2>(1);
   const [gender, setGender] = useState<'male' | 'female'>('female');
 
@@ -132,8 +134,12 @@ export function TryOn3DModal({ isOpen, onClose, onComplete }: TryOn3DModalProps)
 
           <div className="flex flex-col justify-center space-y-8">
             <div>
-              <h3 className="text-2xl font-bold text-hex-dark mb-2">Рекомендуемый размер: M</h3>
-              <p className="text-hex-gray">Идеальная посадка по вашим параметрам</p>
+              <h3 className="text-2xl font-bold text-hex-dark mb-2">Рекомендуемый размер: {suggestedSize ?? 'M'}</h3>
+              <p className="text-hex-gray">
+                {suggestedConfidence
+                  ? `Идеальная посадка (${Math.round((suggestedConfidence <= 1 ? suggestedConfidence * 100 : suggestedConfidence))}% совпадение)`
+                  : 'Идеальная посадка по вашим параметрам'}
+              </p>
             </div>
 
             <div className="space-y-6">
@@ -157,7 +163,11 @@ export function TryOn3DModal({ isOpen, onClose, onComplete }: TryOn3DModalProps)
               ))}
             </div>
 
-            <Button className="w-full" onClick={onComplete} icon={<Check size={20} />}>
+            <Button
+              className="w-full"
+              onClick={() => onComplete({ recommendedSize: suggestedSize, confidence: suggestedConfidence })}
+              icon={<Check size={20} />}
+            >
               Применить этот размер
             </Button>
           </div>

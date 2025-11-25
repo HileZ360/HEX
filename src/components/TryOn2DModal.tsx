@@ -7,10 +7,12 @@ import { clsx } from 'clsx';
 interface TryOn2DModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onComplete: (image: string) => void;
+  onComplete: (payload: { image: string; recommendedSize?: string; confidence?: number }) => void;
+  suggestedSize?: string;
+  suggestedConfidence?: number;
 }
 
-export function TryOn2DModal({ isOpen, onClose, onComplete }: TryOn2DModalProps) {
+export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, suggestedConfidence }: TryOn2DModalProps) {
   const [step, setStep] = useState<'upload' | 'result'>('upload');
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +36,14 @@ export function TryOn2DModal({ isOpen, onClose, onComplete }: TryOn2DModalProps)
   const handleFileSelect = () => {
     // Simulate upload
     setTimeout(() => setStep('result'), 1500);
+  };
+
+  const completeTryOn = () => {
+    onComplete({
+      image: 'result-url',
+      recommendedSize: suggestedSize,
+      confidence: suggestedConfidence,
+    });
   };
 
   return (
@@ -89,7 +99,7 @@ export function TryOn2DModal({ isOpen, onClose, onComplete }: TryOn2DModalProps)
             <div className="absolute bottom-4 left-4 right-4 bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow-sm">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                <span className="text-xs font-medium text-hex-dark">Размер M (автоподбор)</span>
+                <span className="text-xs font-medium text-hex-dark">Размер {suggestedSize ?? 'M'} (автоподбор)</span>
               </div>
             </div>
           </div>
@@ -108,7 +118,7 @@ export function TryOn2DModal({ isOpen, onClose, onComplete }: TryOn2DModalProps)
             </div>
 
             <div className="space-y-3">
-              <Button className="w-full" onClick={() => onComplete('result-url')}>
+              <Button className="w-full" onClick={completeTryOn}>
                 Сохранить результат
               </Button>
               <Button variant="secondary" className="w-full" icon={<RefreshCw size={18} />}>
