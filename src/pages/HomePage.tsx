@@ -10,13 +10,26 @@ import clsx from 'clsx';
 export default function HomePage() {
   const navigate = useNavigate();
   const [url, setUrl] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const { scrollY } = useScroll();
   const y1 = useTransform(scrollY, [0, 500], [0, 200]);
   const y2 = useTransform(scrollY, [0, 500], [0, -150]);
 
   const handleTryOn = () => {
-    if (url) {
-      navigate('/try-on');
+    const trimmed = url.trim();
+
+    if (!trimmed) {
+      setError('Введите ссылку на товар');
+      return;
+    }
+
+    try {
+      const normalized = new URL(trimmed).toString();
+      setError(null);
+      navigate(`/try-on?url=${encodeURIComponent(normalized)}`, { state: { url: normalized } });
+    } catch (err) {
+      console.error('Invalid URL', err);
+      setError('Некорректный URL. Проверьте ссылку на маркетплейс.');
     }
   };
 
@@ -155,9 +168,12 @@ export default function HomePage() {
                 <div className="flex flex-col gap-5">
                   <div className="relative">
                     <Input 
-                      placeholder="Вставьте ссылку на товар (WB, Ozon)" 
+                      placeholder="Вставьте ссылку на товар (WB, Ozon)"
                       value={url}
-                      onChange={(e) => setUrl(e.target.value)}
+                      onChange={(e) => {
+                        setUrl(e.target.value);
+                        if (error) setError(null);
+                      }}
                       className="pr-14 bg-white/50 border-gray-200 focus:bg-white transition-all duration-300"
                       rightElement={
                         <button 
@@ -174,6 +190,9 @@ export default function HomePage() {
                     Перейти к примерке
                     <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </Button>
+                  {error && (
+                    <div className="text-sm text-red-500 font-semibold text-center">{error}</div>
+                  )}
                 </div>
                 
                 <div className="mt-8 flex items-center justify-between border-t border-gray-100 pt-6">
