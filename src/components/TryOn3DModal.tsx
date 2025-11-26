@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Modal from './Modal';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
-import { Info, ArrowRight, Check } from 'lucide-react';
+import { Info, Check, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface TryOn3DModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onComplete: (payload: { recommendedSize?: string; confidence?: number }) => void;
+  onComplete: (payload: { image?: string; recommendedSize?: string; confidence?: number }) => void;
   suggestedSize?: string;
   suggestedConfidence?: number;
 }
@@ -16,10 +16,113 @@ interface TryOn3DModalProps {
 export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, suggestedConfidence }: TryOn3DModalProps) {
   const [step, setStep] = useState<1 | 2>(1);
   const [gender, setGender] = useState<'male' | 'female'>('female');
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [chest, setChest] = useState('');
+  const [waist, setWaist] = useState('');
+  const [hips, setHips] = useState('');
+  const [saveParams, setSaveParams] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [resultSize, setResultSize] = useState<string | undefined>(suggestedSize);
+  const [resultConfidence, setResultConfidence] = useState<number | undefined>(suggestedConfidence);
+  const [previewImage, setPreviewImage] = useState<string | undefined>();
 
-  const handleNext = () => {
-    // Simulate processing
-    setTimeout(() => setStep(2), 1000);
+  const resetState = () => {
+    setStep(1);
+    setGender('female');
+    setHeight('');
+    setWeight('');
+    setChest('');
+    setWaist('');
+    setHips('');
+    setSaveParams(false);
+    setErrors({});
+    setIsSubmitting(false);
+    setSubmitError(null);
+    setResultSize(suggestedSize);
+    setResultConfidence(suggestedConfidence);
+    setPreviewImage(undefined);
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      resetState();
+      return;
+    }
+
+    setResultSize(suggestedSize);
+    setResultConfidence(suggestedConfidence);
+  }, [isOpen, suggestedSize, suggestedConfidence]);
+
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
+
+    const validateNumber = (value: string, field: string) => {
+      if (!value) {
+        newErrors[field] = 'Заполните это поле';
+        return;
+      }
+
+      const numeric = Number(value);
+      if (Number.isNaN(numeric) || numeric <= 0) {
+        newErrors[field] = 'Введите положительное число';
+      }
+    };
+
+    validateNumber(height, 'height');
+    validateNumber(weight, 'weight');
+    validateNumber(chest, 'chest');
+    validateNumber(waist, 'waist');
+    validateNumber(hips, 'hips');
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleNext = async () => {
+    if (isSubmitting) return;
+    if (!validateForm()) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const response = await fetch('/api/tryon/3d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gender,
+          height: Number(height),
+          weight: Number(weight),
+          chest: Number(chest),
+          waist: Number(waist),
+          hips: Number(hips),
+          saveParams,
+          suggestedSize,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.message || 'Не удалось получить результат примерки.');
+      }
+
+      const nextSize = data?.recommendedSize ?? suggestedSize;
+      const nextConfidence = data?.confidence ?? suggestedConfidence;
+      const nextPreview = data?.renderedImage ?? data?.imageUrl ?? data?.image;
+
+      setResultSize(nextSize);
+      setResultConfidence(nextConfidence);
+      setPreviewImage(nextPreview);
+      setStep(2);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Произошла ошибка. Попробуйте снова.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -73,30 +176,74 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Рост" placeholder="170" rightElement={<span className="text-gray-400 text-sm">см</span>} />
-              <Input label="Вес" placeholder="60" rightElement={<span className="text-gray-400 text-sm">кг</span>} />
+              <Input
+                label="Рост"
+                placeholder="170"
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+                error={errors.height}
+                rightElement={<span className="text-gray-400 text-sm">см</span>}
+              />
+              <Input
+                label="Вес"
+                placeholder="60"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                error={errors.weight}
+                rightElement={<span className="text-gray-400 text-sm">кг</span>}
+              />
             </div>
-            
+
             <div className="grid grid-cols-3 gap-4">
-              <Input label="Грудь" placeholder="90" />
-              <Input label="Талия" placeholder="65" />
-              <Input label="Бёдра" placeholder="95" />
+              <Input
+                label="Грудь"
+                placeholder="90"
+                value={chest}
+                onChange={(e) => setChest(e.target.value)}
+                error={errors.chest}
+              />
+              <Input
+                label="Талия"
+                placeholder="65"
+                value={waist}
+                onChange={(e) => setWaist(e.target.value)}
+                error={errors.waist}
+              />
+              <Input
+                label="Бёдра"
+                placeholder="95"
+                value={hips}
+                onChange={(e) => setHips(e.target.value)}
+                error={errors.hips}
+              />
             </div>
 
             <div className="flex items-center gap-2">
-              <input type="checkbox" id="save-params" className="rounded border-gray-300 text-hex-primary focus:ring-hex-primary" />
+              <input
+                type="checkbox"
+                id="save-params"
+                className="rounded border-gray-300 text-hex-primary focus:ring-hex-primary"
+                checked={saveParams}
+                onChange={(e) => setSaveParams(e.target.checked)}
+              />
               <label htmlFor="save-params" className="text-sm text-hex-gray">
                 Сохранить параметры для следующих примерок
               </label>
             </div>
 
             <div className="pt-2">
-              <Button className="w-full" onClick={handleNext}>
-                Продолжить к примерке
+              <Button className="w-full" onClick={handleNext} disabled={isSubmitting} icon={isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : undefined}>
+                {isSubmitting ? 'Рассчитываем параметры...' : 'Продолжить к примерке'}
               </Button>
               <button className="w-full mt-3 text-sm text-hex-gray hover:text-hex-primary transition-colors">
                 Пропустить и использовать усреднённый аватар
               </button>
+
+              {submitError && (
+                <div className="mt-3 bg-red-50 border border-red-100 text-red-700 rounded-xl p-3 text-sm">
+                  {submitError}
+                </div>
+              )}
             </div>
           </div>
 
@@ -125,19 +272,22 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
           <div className="aspect-[3/4] bg-gray-50 rounded-xl flex items-center justify-center relative overflow-hidden">
             {/* Placeholder for 3D Avatar */}
             <div className="absolute inset-0 bg-gradient-to-b from-gray-50 to-gray-100"></div>
-            <img 
-              src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800&q=80" 
-              alt="3D Avatar" 
+            <img
+              src={
+                previewImage ??
+                'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800&q=80'
+              }
+              alt="3D Avatar"
               className="h-[90%] object-contain relative z-10 mix-blend-multiply opacity-80 grayscale"
             />
           </div>
 
           <div className="flex flex-col justify-center space-y-8">
             <div>
-              <h3 className="text-2xl font-bold text-hex-dark mb-2">Рекомендуемый размер: {suggestedSize ?? 'M'}</h3>
+              <h3 className="text-2xl font-bold text-hex-dark mb-2">Рекомендуемый размер: {resultSize ?? 'M'}</h3>
               <p className="text-hex-gray">
-                {suggestedConfidence
-                  ? `Идеальная посадка (${Math.round((suggestedConfidence <= 1 ? suggestedConfidence * 100 : suggestedConfidence))}% совпадение)`
+                {resultConfidence
+                  ? `Идеальная посадка (${Math.round((resultConfidence <= 1 ? resultConfidence * 100 : resultConfidence))}% совпадение)`
                   : 'Идеальная посадка по вашим параметрам'}
               </p>
             </div>
@@ -165,7 +315,13 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
 
             <Button
               className="w-full"
-              onClick={() => onComplete({ recommendedSize: suggestedSize, confidence: suggestedConfidence })}
+              onClick={() =>
+                onComplete({
+                  image: previewImage,
+                  recommendedSize: resultSize,
+                  confidence: resultConfidence,
+                })
+              }
               icon={<Check size={20} />}
             >
               Применить этот размер
