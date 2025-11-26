@@ -4,6 +4,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { ALLOWED_MARKETPLACE_DOMAINS, parseProductFromUrl } from './productParser';
+import { callCatvtonProvider } from './services/providers/catvton';
+import { PreviewStorageError, TryOnProviderError } from './services/tryOnProviderError';
 
 const AVAILABLE_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
 const TRY_ON_TIMEOUT_MS = Number(process.env.TRY_ON_TIMEOUT_MS ?? 20000);
@@ -11,6 +13,9 @@ const TRY_ON_API_URL = process.env.TRY_ON_API_URL;
 const TRY_ON_3D_API_URL = process.env.TRY_ON_3D_API_URL ?? TRY_ON_API_URL;
 const TRY_ON_API_TOKEN = process.env.TRY_ON_API_TOKEN;
 const TRY_ON_PROVIDER_TIMEOUT_MS = Number(process.env.TRY_ON_PROVIDER_TIMEOUT_MS ?? 12000);
+const CATVTON_API_URL = process.env.CATVTON_API_URL ?? TRY_ON_API_URL;
+const CATVTON_API_TOKEN = process.env.CATVTON_API_TOKEN ?? TRY_ON_API_TOKEN;
+const CATVTON_TIMEOUT_MS = Number(process.env.CATVTON_TIMEOUT_MS ?? TRY_ON_PROVIDER_TIMEOUT_MS);
 
 const server = Fastify({ logger: true });
 const PREVIEW_DIR = path.join(process.cwd(), 'tmp', 'tryon-previews');
@@ -30,6 +35,8 @@ const PRODUCT_REPEAT_LIMIT = Number(process.env.PRODUCT_REPEAT_LIMIT ?? 6);
 const PRODUCT_URL_MAX_LENGTH = Number(process.env.PRODUCT_URL_MAX_LENGTH ?? 2048);
 const PRODUCT_PARSE_MAX_CONCURRENCY = Number(process.env.PRODUCT_PARSE_MAX_CONCURRENCY ?? 4);
 const PRODUCT_PARSE_QUEUE_LIMIT = Number(process.env.PRODUCT_PARSE_QUEUE_LIMIT ?? 32);
+const PARSED_PRODUCT_TTL_MS = Number(process.env.PARSED_PRODUCT_TTL_MS ?? 20 * 60 * 1000);
+const PARSED_PRODUCT_CACHE_LIMIT = Number(process.env.PARSED_PRODUCT_CACHE_LIMIT ?? 50);
 
 const getClientIdentifier = (request: FastifyRequest) => {
   const headerToken = request.headers['x-api-token'] ?? request.headers.authorization;
@@ -61,6 +68,7 @@ const productRateLimits = new Map<string, { count: number; resetAt: number }>();
 const productRepeatLimits = new Map<string, { count: number; resetAt: number }>();
 const productParseQueue: Array<() => void> = [];
 let activeProductParses = 0;
+const parsedProducts = new Map<string, { images: string[]; createdAt: number }>();
 
 const getPreviewTokenSecret = () => {
   if (process.env.PREVIEW_TOKEN_SECRET) {
@@ -160,6 +168,40 @@ const applyProductRepeatLimit = (key: string, url: string) => {
   return { allowed: true as const };
 };
 
+const cleanupParsedProducts = () => {
+  const now = Date.now();
+  for (const [id, entry] of parsedProducts.entries()) {
+    if (now - entry.createdAt > PARSED_PRODUCT_TTL_MS) {
+      parsedProducts.delete(id);
+    }
+  }
+
+  if (parsedProducts.size > PARSED_PRODUCT_CACHE_LIMIT) {
+    const sorted = [...parsedProducts.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
+    const extra = sorted.slice(0, parsedProducts.size - PARSED_PRODUCT_CACHE_LIMIT);
+    for (const [id] of extra) parsedProducts.delete(id);
+  }
+};
+
+const rememberParsedProduct = (images: string[]) => {
+  cleanupParsedProducts();
+
+  const normalizedImages = Array.isArray(images)
+    ? images.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+
+  const id = randomUUID();
+  parsedProducts.set(id, { images: normalizedImages, createdAt: Date.now() });
+  return id;
+};
+
+const resolveProductImageUrl = (productId: string, index = 0) => {
+  cleanupParsedProducts();
+  const entry = parsedProducts.get(productId);
+  if (!entry) return null;
+  return entry.images[index] ?? entry.images[0] ?? null;
+};
+
 const acquireProductParseSlot = () =>
   new Promise<() => void>((resolve, reject) => {
     const tryAcquire = () => {
@@ -197,20 +239,6 @@ async function ensurePreviewDir() {
     cleanupTimer.unref?.();
   }
   return previewDirReady;
-}
-
-class PreviewStorageError extends Error {
-  constructor(public statusCode: number, message: string) {
-    super(message);
-    this.name = 'PreviewStorageError';
-  }
-}
-
-class TryOnProviderError extends Error {
-  constructor(public statusCode: number, message: string) {
-    super(message);
-    this.name = 'TryOnProviderError';
-  }
 }
 
 type PreviewManifestEntry = { filename: string; createdAt: number; size: number };
@@ -693,6 +721,25 @@ const decodeBase64Buffer = (value: unknown, field: string) => {
   }
 };
 
+const extractFieldValue = (value: unknown) => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((item) => typeof item === 'string');
+  if (typeof (value as any)?.value === 'string') return (value as any).value;
+  return undefined;
+};
+
+const normalizeHttpsUrl = (value?: string | null) => {
+  if (!value || !value.trim()) return null;
+
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
 const normalizeMasks = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
@@ -713,83 +760,60 @@ const normalizeConfidence = (value: unknown, fallback: number) => {
 const run2DTryOn = async ({
   imageBuffer,
   suggestedSize,
+  garmentImageUrl,
+  productId,
+  pose,
   signal,
 }: {
   imageBuffer: Buffer;
   suggestedSize?: string;
+  garmentImageUrl?: string | null;
+  productId?: string;
+  pose?: string;
   signal: AbortSignal;
 }) => {
   throwIfAborted(signal);
 
-  if (!TRY_ON_API_URL) {
+  if (!CATVTON_API_URL) {
     throw new TryOnProviderError(500, 'Сервис 2D-примерки не настроен. Обратитесь к администратору.');
   }
 
-  const uploadForm = new FormData();
-  const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
-  uploadForm.append('image', blob, 'tryon-source.jpg');
+  const hasExplicitGarmentUrl = typeof garmentImageUrl === 'string' && garmentImageUrl.trim().length > 0;
+  const productImageFromCache = productId ? resolveProductImageUrl(productId) : null;
+  const resolvedGarmentImageUrl = normalizeHttpsUrl(garmentImageUrl ?? productImageFromCache ?? undefined);
 
-  if (suggestedSize) {
-    uploadForm.append('suggestedSize', suggestedSize);
-  }
-
-  const fetchSignal = buildBoundedSignal(signal, TRY_ON_PROVIDER_TIMEOUT_MS);
-
-  let response: Response;
-
-  try {
-    response = await fetch(TRY_ON_API_URL, {
-      method: 'POST',
-      headers: TRY_ON_API_TOKEN ? { Authorization: `Bearer ${TRY_ON_API_TOKEN}` } : undefined,
-      body: uploadForm,
-      signal: fetchSignal,
-    });
-  } catch (error: any) {
-    if (error?.name === 'AbortError') {
-      throw abortError('Processing aborted');
+  if (!resolvedGarmentImageUrl) {
+    if (productId && !productImageFromCache) {
+      throw new TryOnProviderError(400, 'Не найден товар для указанного идентификатора productId.');
     }
 
-    throw new TryOnProviderError(502, 'Сервис примерки недоступен. Попробуйте позже.');
-  }
-
-  if (!response.ok) {
-    let errorMessage = 'Сервис примерки вернул ошибку.';
-
-    try {
-      const payload = await response.json();
-      if (typeof payload?.message === 'string') errorMessage = payload.message;
-      else if (typeof payload?.error === 'string') errorMessage = payload.error;
-    } catch {
-      const text = await response.text().catch(() => '');
-      if (text) errorMessage = text;
+    if (hasExplicitGarmentUrl) {
+      throw new TryOnProviderError(400, 'Укажите корректную HTTPS-ссылку на изображение одежды.');
     }
 
-    const statusCode = response.status >= 500 ? 502 : response.status;
-    throw new TryOnProviderError(statusCode || 502, errorMessage);
+    throw new TryOnProviderError(400, 'Добавьте ссылку на изображение одежды для примерки.');
   }
 
-  let payload: any;
+  const providerResult = await callCatvtonProvider({
+    apiUrl: CATVTON_API_URL,
+    token: CATVTON_API_TOKEN,
+    timeoutMs: CATVTON_TIMEOUT_MS,
+    userImage: imageBuffer,
+    garmentImageUrl: resolvedGarmentImageUrl,
+    suggestedSize,
+    pose,
+    signal,
+  });
 
-  try {
-    payload = await response.json();
-  } catch {
-    throw new TryOnProviderError(502, 'Некорректный ответ сервиса примерки.');
-  }
-
-  const previewBuffer = decodeBase64Buffer(
-    payload?.preview ?? payload?.previewImage ?? payload?.previewBase64,
-    'preview',
-  );
-
-  const recommendedSize = normalizeSize(payload?.recommendedSize ?? suggestedSize) ?? 'M';
-  const confidence = normalizeConfidence(payload?.confidence, 0.82);
-  const masks = normalizeMasks(payload?.masks);
+  const recommendedSize = normalizeSize(providerResult.recommendedSize ?? suggestedSize) ?? 'M';
+  const confidence = normalizeConfidence(providerResult.confidence, 0.82);
+  const masks = normalizeMasks(providerResult.masks);
   const recommendation =
-    typeof payload?.recommendation === 'string' && payload.recommendation.trim()
-      ? payload.recommendation.trim()
+    typeof providerResult.recommendation === 'string' && providerResult.recommendation.trim()
+      ? providerResult.recommendation.trim()
       : `Рекомендуем размер ${recommendedSize}.`;
 
-  const persistedPreview = await persistPreview({ buffer: previewBuffer, signal });
+  const persistedPreview = await persistPreview({ buffer: providerResult.render, signal });
   const previewUrl = buildPreviewUrl(persistedPreview.filename);
 
   return {
@@ -875,14 +899,17 @@ server.get('/api/product/parse', async (request, reply) => {
 
     try {
       const parsedProduct = await parseProductFromUrl(url, request.log);
+      const productId = rememberParsedProduct(parsedProduct.images ?? []);
 
       reply.send({
+        productId,
         title: parsedProduct.title,
         article: parsedProduct.article ?? null,
         price: parsedProduct.price ?? null,
         originalPrice: parsedProduct.originalPrice ?? null,
         discount: parsedProduct.discount ?? null,
         images: parsedProduct.images ?? [],
+        primaryImage: parsedProduct.images?.[0] ?? null,
         similar: parsedProduct.similar ?? [],
         sizes: parsedProduct.sizes ?? [],
         recommendedSize: parsedProduct.recommendedSize ?? null,
@@ -964,6 +991,12 @@ server.post('/api/tryon/2d', async (request, reply) => {
         : undefined,
     );
 
+    const garmentImageUrl = extractFieldValue(
+      (file.fields as any)?.garmentImageUrl?.value ?? (file.fields as any)?.garmentImageUrl,
+    );
+    const productId = extractFieldValue((file.fields as any)?.productId?.value ?? (file.fields as any)?.productId);
+    const pose = extractFieldValue((file.fields as any)?.pose?.value ?? (file.fields as any)?.pose);
+
     const imageBuffer = await file.toBuffer();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TRY_ON_TIMEOUT_MS);
@@ -972,6 +1005,9 @@ server.post('/api/tryon/2d', async (request, reply) => {
       const result = await run2DTryOn({
         imageBuffer,
         suggestedSize,
+        garmentImageUrl,
+        productId,
+        pose,
         signal: controller.signal,
       });
 

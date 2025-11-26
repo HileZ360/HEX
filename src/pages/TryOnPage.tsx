@@ -10,12 +10,14 @@ import { motion } from 'framer-motion';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
 type ParsedProduct = {
+  productId?: string;
   title: string;
   article?: string;
   price?: number;
   originalPrice?: number;
   discount?: number;
   images: string[];
+  primaryImage?: string | null;
   similar: { title?: string; price?: number; image?: string }[];
   sizes: string[];
   recommendedSize?: string;
@@ -67,12 +69,14 @@ export default function TryOnPage() {
       data?.recommendation?.confidence ?? data?.sizeRecommendation?.confidence ?? data?.recommendationConfidence;
 
     return {
+      productId: data?.productId ?? data?.id,
       title: data?.title ?? data?.name ?? 'Товар',
       article: data?.article ?? data?.sku ?? data?.vendorCode,
       price: Number.isFinite(price) ? price : undefined,
       originalPrice: Number.isFinite(originalPrice) ? originalPrice : undefined,
       discount: Number.isFinite(discount) ? discount : undefined,
       images: Array.isArray(images) ? images : [],
+      primaryImage: data?.primaryImage ?? (Array.isArray(images) ? images[0] : null),
       similar: Array.isArray(similar) ? similar : [],
       sizes: Array.isArray(sizes) ? sizes.map(String) : [],
       recommendedSize,
@@ -544,6 +548,8 @@ export default function TryOnPage() {
         onClose={() => setIs2DModalOpen(false)}
         suggestedSize={sizeRecommendation?.size ?? product?.recommendedSize ?? selectedSize}
         suggestedConfidence={sizeRecommendation?.confidence ?? product?.recommendationConfidence}
+        garmentImageUrl={productImages[selectedImageIndex] ?? product?.primaryImage ?? undefined}
+        productId={product?.productId}
         onComplete={({ image, recommendedSize, confidence }) =>
           handleTryOnComplete({ mode: '2d', image, recommendedSize, confidence })
         }

@@ -10,6 +10,8 @@ interface TryOn2DModalProps {
   onComplete: (payload: { image: string; recommendedSize?: string; confidence?: number }) => void;
   suggestedSize?: string;
   suggestedConfidence?: number;
+  garmentImageUrl?: string;
+  productId?: string;
 }
 
 export function TryOn2DModal({
@@ -18,6 +20,8 @@ export function TryOn2DModal({
   onComplete,
   suggestedSize,
   suggestedConfidence,
+  garmentImageUrl,
+  productId,
 }: TryOn2DModalProps) {
   const [step, setStep] = useState<'upload' | 'result'>('upload');
   const [isDragging, setIsDragging] = useState(false);
@@ -104,6 +108,12 @@ export function TryOn2DModal({
       formData.append('image', file);
       if (suggestedSize) {
         formData.append('suggestedSize', suggestedSize);
+      }
+      if (garmentImageUrl) {
+        formData.append('garmentImageUrl', garmentImageUrl);
+      }
+      if (productId) {
+        formData.append('productId', productId);
       }
 
       const response = await fetch('/api/tryon/2d', {
