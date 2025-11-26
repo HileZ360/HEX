@@ -25,6 +25,17 @@ export default function HomePage() {
 
     try {
       const normalized = new URL(trimmed).toString();
+      const hostname = new URL(normalized).hostname.toLowerCase();
+      const supportedHosts = ['wildberries.ru', 'ozon.ru'];
+      const isSupportedMarketplace = supportedHosts.some((domain) =>
+        hostname === domain || hostname.endsWith(`.${domain}`)
+      );
+
+      if (!isSupportedMarketplace) {
+        setError('Мы пока поддерживаем только ссылки с wildberries.ru и ozon.ru');
+        return;
+      }
+
       setError(null);
       navigate(`/try-on?url=${encodeURIComponent(normalized)}`, { state: { url: normalized } });
     } catch (err) {
