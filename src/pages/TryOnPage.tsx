@@ -4,7 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { TryOn2DModal } from '../components/TryOn2DModal';
 import { TryOn3DModal } from '../components/TryOn3DModal';
-import { Camera, Box, Heart, Share2, Sparkles, ArrowLeft, AlertTriangle, Loader2 } from 'lucide-react';
+import { Camera, Box, Heart, Share2, Sparkles, ArrowLeft, AlertTriangle, Loader2, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
@@ -35,6 +35,8 @@ export default function TryOnPage() {
   const [selectedSize, setSelectedSize] = useState('M');
   const [product, setProduct] = useState<ParsedProduct | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [sizeRecommendation, setSizeRecommendation] = useState<{
     size: string;
     confidence?: number;
@@ -139,6 +141,13 @@ export default function TryOnPage() {
     return () => controller.abort();
   }, [initialUrl]);
 
+  useEffect(() => {
+    if (!actionMessage) return;
+
+    const timer = setTimeout(() => setActionMessage(null), 3000);
+    return () => clearTimeout(timer);
+  }, [actionMessage]);
+
   const productImages = useMemo(() => product?.images?.filter(Boolean) ?? [], [product]);
   const availableSizes = useMemo(() => product?.sizes?.length ? product.sizes : ['XS', 'S', 'M', 'L', 'XL'], [product]);
 
@@ -173,8 +182,45 @@ export default function TryOnPage() {
     }
   };
 
+  const handleShare = async () => {
+    const shareUrl = initialUrl || window.location.href;
+    const shareData = {
+      title: product?.title ?? 'HEX AI Try-On',
+      text: 'Посмотри, какой образ я примеряю!',
+      url: shareUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        setActionMessage('Ссылка отправлена через системное меню.');
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        setActionMessage('Ссылка скопирована в буфер обмена.');
+      } else {
+        setActionMessage(`Скопируйте ссылку: ${shareUrl}`);
+      }
+    } catch {
+      setActionMessage('Не удалось поделиться ссылкой.');
+    }
+  };
+
+  const handleToggleFavorite = () => {
+    setIsFavorite((prev) => !prev);
+    setActionMessage(!isFavorite ? 'Добавлено в избранное.' : 'Удалено из избранного.');
+  };
+
   return (
     <Layout>
+      {actionMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="fixed top-6 right-6 z-20 bg-white shadow-xl border border-gray-100 rounded-2xl px-4 py-3 text-sm font-semibold text-hex-dark"
+        >
+          {actionMessage}
+        </motion.div>
+      )}
       <div className="container mx-auto px-6 py-8 lg:py-12">
         <div className="mb-8">
           <Link to="/" className="inline-flex items-center text-hex-gray hover:text-hex-primary transition-colors font-medium">
@@ -256,11 +302,24 @@ export default function TryOnPage() {
               {/* Overlay Controls */}
               <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0">
                 <div className="flex gap-3">
-                  <button className="p-4 bg-white/90 backdrop-blur-md rounded-2xl hover:bg-white transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 duration-300">
+                  <button
+                    onClick={handleShare}
+                    className="p-4 bg-white/90 backdrop-blur-md rounded-2xl hover:bg-white transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 duration-300"
+                    aria-label="Поделиться"
+                  >
                     <Share2 size={22} className="text-hex-dark" />
                   </button>
-                  <button className="p-4 bg-white/90 backdrop-blur-md rounded-2xl hover:bg-white transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 duration-300">
-                    <Heart size={22} className="text-hex-dark" />
+                  <button
+                    onClick={handleToggleFavorite}
+                    className={clsx(
+                      'p-4 bg-white/90 backdrop-blur-md rounded-2xl transition-colors shadow-lg hover:shadow-xl hover:-translate-y-1 duration-300 border',
+                      isFavorite
+                        ? 'bg-hex-primary/10 border-hex-primary/40'
+                        : 'hover:bg-white border-transparent'
+                    )}
+                    aria-label={isFavorite ? 'Убрать из избранного' : 'Добавить в избранное'}
+                  >
+                    <Heart size={22} className={clsx('text-hex-dark', isFavorite && 'fill-hex-primary text-hex-primary')} />
                   </button>
                 </div>
                 <div className="bg-white/90 backdrop-blur-md px-6 py-3 rounded-2xl shadow-lg border border-white/50">
