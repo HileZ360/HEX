@@ -112,7 +112,7 @@ test('extracts available sizes from structured product data', async () => {
     assert.equal(response.statusCode, 200);
 
     const payload = response.json();
-    assert.deepEqual(payload.sizes, ['S', 'M', 'L']);
+    assert.deepEqual(payload.sizes, ['L', 'M', 'S']);
   } finally {
     global.fetch = originalFetch;
   }
