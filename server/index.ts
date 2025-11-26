@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import sharp from 'sharp';
 import { ALLOWED_MARKETPLACE_DOMAINS, parseProductFromUrl } from './productParser';
 
@@ -17,6 +17,9 @@ const PREVIEW_RETENTION_MINUTES = Number(process.env.PREVIEW_RETENTION_MINUTES ?
 const PREVIEW_MAX_COUNT = Number(process.env.PREVIEW_MAX_COUNT ?? 400);
 const PREVIEW_MAX_TOTAL_BYTES = Number(process.env.PREVIEW_MAX_TOTAL_BYTES ?? 200 * 1024 * 1024);
 const PREVIEW_CLEANUP_INTERVAL_MS = Number(process.env.PREVIEW_CLEANUP_INTERVAL_MS ?? 10 * 60 * 1000);
+const PREVIEW_TOKEN_TTL_MS = Number(process.env.PREVIEW_TOKEN_TTL_MS ?? 15 * 60 * 1000);
+const PREVIEW_RATE_LIMIT_WINDOW_MS = Number(process.env.PREVIEW_RATE_LIMIT_WINDOW_MS ?? 60 * 1000);
+const PREVIEW_RATE_LIMIT_MAX = Number(process.env.PREVIEW_RATE_LIMIT_MAX ?? 30);
 
 server.register(multipart, {
   limits: {
@@ -28,6 +31,71 @@ server.register(multipart, {
 
 let previewDirReady: Promise<void> | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
+let previewTokenSecret: Buffer | null = null;
+const previewRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+const getPreviewTokenSecret = () => {
+  if (process.env.PREVIEW_TOKEN_SECRET) {
+    return Buffer.from(process.env.PREVIEW_TOKEN_SECRET, 'utf8');
+  }
+
+  if (!previewTokenSecret) {
+    previewTokenSecret = randomBytes(32);
+  }
+
+  return previewTokenSecret;
+};
+
+const createPreviewSignature = ({ previewId, expiresAt }: { previewId: string; expiresAt: number }) => {
+  const hmac = createHmac('sha256', getPreviewTokenSecret());
+  hmac.update(`${previewId}:${expiresAt}`);
+  return hmac.digest('hex');
+};
+
+const isValidPreviewSignature = ({
+  previewId,
+  token,
+  expiresAt,
+}: {
+  previewId: string;
+  token?: string;
+  expiresAt?: string;
+}) => {
+  if (!token || !/^[a-f0-9]{64}$/i.test(token) || !expiresAt) {
+    return false;
+  }
+
+  const expiresAtMs = Number(expiresAt);
+
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs < Date.now()) {
+    return false;
+  }
+
+  const expected = createPreviewSignature({ previewId, expiresAt: expiresAtMs });
+
+  try {
+    return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(token, 'hex'));
+  } catch {
+    return false;
+  }
+};
+
+const applyPreviewRateLimit = (ip: string) => {
+  const now = Date.now();
+  const current = previewRateLimits.get(ip);
+
+  if (!current || current.resetAt <= now) {
+    previewRateLimits.set(ip, { count: 1, resetAt: now + PREVIEW_RATE_LIMIT_WINDOW_MS });
+    return { allowed: true as const };
+  }
+
+  if (current.count >= PREVIEW_RATE_LIMIT_MAX) {
+    return { allowed: false as const, retryAt: current.resetAt };
+  }
+
+  previewRateLimits.set(ip, { ...current, count: current.count + 1 });
+  return { allowed: true as const };
+};
 
 async function ensurePreviewDir() {
   if (!previewDirReady) {
@@ -391,7 +459,14 @@ const persistPreview = async ({ buffer, signal }: { buffer: Buffer; signal: Abor
   return { id, filepath, filename } as const;
 };
 
-const buildPreviewUrl = (filename: string) => `${PREVIEW_ROUTE_PREFIX}/${filename.replace(/\.jpg$/, '')}`;
+const buildPreviewUrl = (filename: string) => {
+  const previewId = filename.replace(/\.jpg$/, '');
+  const expiresAt = Date.now() + PREVIEW_TOKEN_TTL_MS;
+  const token = createPreviewSignature({ previewId, expiresAt });
+
+  const search = new URLSearchParams({ token, expiresAt: String(expiresAt) });
+  return `${PREVIEW_ROUTE_PREFIX}/${previewId}?${search.toString()}`;
+};
 
 const run2DTryOn = async ({
   imageBuffer,
@@ -489,8 +564,24 @@ server.get('/api/product/parse', async (request, reply) => {
 
 server.get(`${PREVIEW_ROUTE_PREFIX}/:id`, async (request, reply) => {
   const { id } = request.params as { id?: string };
+  const { token, expiresAt } = request.query as { token?: string; expiresAt?: string };
+
   if (!id || !/^[-a-f0-9]+$/i.test(id)) {
     reply.code(400).send({ message: 'Укажите корректный идентификатор предпросмотра.' });
+    return;
+  }
+
+  const rateLimit = applyPreviewRateLimit(request.ip);
+  if (!rateLimit.allowed) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((rateLimit.retryAt - Date.now()) / 1000));
+    reply.header('Retry-After', String(retryAfterSeconds));
+    reply.code(429).send({ message: 'Слишком много запросов предпросмотра. Повторите позже.' });
+    return;
+  }
+
+  const hasValidSignature = isValidPreviewSignature({ previewId: id, token, expiresAt });
+  if (!hasValidSignature) {
+    reply.code(403).send({ message: 'Доступ к предпросмотру запрещён.' });
     return;
   }
 
