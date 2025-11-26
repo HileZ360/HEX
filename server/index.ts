@@ -264,6 +264,28 @@ server.get('/api/product/parse', async (request, reply) => {
     return;
   }
 
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    reply.code(400).send({ error: 'Invalid url query param' });
+    return;
+  }
+
+  const allowedDomains = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'];
+  const isHttps = parsedUrl.protocol === 'https:';
+  const isAllowedDomain = allowedDomains.some(
+    (domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`)
+  );
+
+  if (!isHttps || !isAllowedDomain) {
+    reply
+      .code(400)
+      .send({ error: 'Неподдерживаемый источник товара. Используйте HTTPS-ссылки wildberries.ru, ozon.ru или lamoda.ru.' });
+    return;
+  }
+
   try {
     const parsedProduct = await parseProductFromUrl(url);
 
@@ -385,12 +407,16 @@ server.post('/api/tryon/3d', async (request, reply) => {
 
 const PORT = Number(process.env.PORT) || 4000;
 
-server
-  .listen({ port: PORT, host: '0.0.0.0' })
-  .then(() => {
-    server.log.info(`HEX server listening on port ${PORT}`);
-  })
-  .catch((error) => {
-    server.log.error(error);
-    process.exit(1);
-  });
+if (process.env.NODE_ENV !== 'test') {
+  server
+    .listen({ port: PORT, host: '0.0.0.0' })
+    .then(() => {
+      server.log.info(`HEX server listening on port ${PORT}`);
+    })
+    .catch((error) => {
+      server.log.error(error);
+      process.exit(1);
+    });
+}
+
+export default server;
