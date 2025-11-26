@@ -345,7 +345,7 @@ server.get('/api/product/parse', async (request, reply) => {
   }
 
   try {
-    const parsedProduct = await parseProductFromUrl(url);
+    const parsedProduct = await parseProductFromUrl(url, request.log);
 
     reply.send({
       title: parsedProduct.title,
@@ -362,12 +362,14 @@ server.get('/api/product/parse', async (request, reply) => {
       marketplace: parsedProduct.marketplace,
     });
   } catch (error: any) {
-    request.log.error(error);
     const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     const message =
       statusCode === 504
         ? 'Превышено время ожидания загрузки товара'
         : error?.message ?? 'Failed to parse product';
+
+    const context = error instanceof Error ? (error as any).context : undefined;
+    request.log.error({ err: error, context, cause: error?.cause }, 'Product parsing failed');
 
     reply.code(statusCode).send({ error: message });
   }

@@ -4,6 +4,7 @@ import { FALLBACK_IMAGES, normalizeImages } from '../normalizers/media.js';
 import { extractSizes } from '../normalizers/sizing.js';
 import { normalizeSimilarItems } from '../normalizers/similar.js';
 import { extractJsonLdProduct } from './jsonld.js';
+import { resolveLogger, type ParseLogger } from '../logger.js';
 import type { ParsedProduct } from '../types/product.js';
 
 const extractMetaContent = ($: ReturnType<typeof load>, selectors: string[]) => {
@@ -14,7 +15,8 @@ const extractMetaContent = ($: ReturnType<typeof load>, selectors: string[]) => 
   return undefined;
 };
 
-export const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct => {
+export const parseHtmlProduct = (html: string, targetUrl: URL, logger?: ParseLogger): ParsedProduct => {
+  const log = resolveLogger(logger);
   const $ = load(html);
   const product = extractJsonLdProduct($) ?? {};
 
@@ -22,11 +24,12 @@ export const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct =>
   const metaPrice = extractMetaContent($, ['meta[property="product:price:amount"]', 'meta[itemprop="price"]']);
   const price = offerPrice ?? ensureNumber(metaPrice);
 
-  const article =
-    product.sku ??
-    product.mpn ??
-    extractMetaContent($, ['meta[property="product:retailer_item_id"]', 'meta[itemprop="sku"]']) ??
-    targetUrl.pathname.split('/').filter(Boolean).pop();
+  const articleFromPath = targetUrl.pathname.split('/').filter(Boolean).pop();
+  const articleMeta = extractMetaContent($, ['meta[property="product:retailer_item_id"]', 'meta[itemprop="sku"]']);
+  const article = product.sku ?? product.mpn ?? articleMeta ?? articleFromPath;
+  if (!product.sku && !product.mpn && !articleMeta && articleFromPath) {
+    log.debug('Using article identifier from URL path', { article: articleFromPath, url: targetUrl.href });
+  }
 
   const discount = product.discount ?? computeDiscount(price, originalPrice);
 
@@ -34,6 +37,9 @@ export const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct =>
     ...normalizeImages(product.image),
     ...normalizeImages(extractMetaContent($, ['meta[property="og:image"]'])),
   ].filter(Boolean);
+  if (!images.length) {
+    log.debug('Falling back to default images', { url: targetUrl.href });
+  }
 
   const sizes = extractSizes(product);
   const similar = normalizeSimilarItems(product.isSimilarTo);

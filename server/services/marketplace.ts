@@ -1,15 +1,23 @@
 import { computeDiscount } from '../normalizers/pricing.js';
 import { FALLBACK_IMAGES } from '../normalizers/media.js';
 import type { ParsedProduct } from '../types/product.js';
+import { resolveLogger, type ParseLogger } from '../logger.js';
 
 export const ALLOWED_MARKETPLACE_DOMAINS = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'] as const;
 export const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
 
 export class ProductFetchError extends Error {
-  constructor(message: string, public statusCode: number) {
-    super(message);
+  public context: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    public statusCode: number,
+    options?: { cause?: unknown; context?: Record<string, unknown> },
+  ) {
+    super(message, options?.cause ? { cause: options.cause } : undefined);
     this.name = 'ProductFetchError';
+    this.context = options?.context ?? {};
   }
 }
 
@@ -30,11 +38,15 @@ export const fetchWithRedirects = async ({
   url,
   signal,
   maxRedirects = 3,
+  logger,
 }: {
   url: URL;
   signal: AbortSignal;
   maxRedirects?: number;
+  logger?: ParseLogger;
 }) => {
+  const log = resolveLogger(logger);
+  const redirectChain = [url.href];
   let currentUrl = url;
 
   for (let attempt = 0; attempt <= maxRedirects; attempt++) {
@@ -50,25 +62,43 @@ export const fetchWithRedirects = async ({
       const nextUrl = location ? new URL(location, currentUrl) : null;
 
       if (!nextUrl || nextUrl.protocol !== 'https:' || !isAllowedMarketplace(nextUrl.hostname)) {
-        throw new ProductFetchError('Редирект на неподдерживаемый домен.', 400);
+        throw new ProductFetchError('Редирект на неподдерживаемый домен.', 400, {
+          context: { redirectChain, location },
+        });
       }
 
+      log.debug('Following redirect during product fetch', {
+        from: currentUrl.href,
+        to: nextUrl.href,
+        attempt,
+      });
+
       currentUrl = nextUrl;
+      redirectChain.push(currentUrl.href);
       continue;
     }
 
     if (!response.ok) {
-      throw new ProductFetchError(`Не удалось загрузить страницу товара: ${response.status}`, 502);
+      throw new ProductFetchError(`Не удалось загрузить страницу товара: ${response.status}`, 502, {
+        context: { redirectChain, status: response.status },
+      });
     }
 
     const html = await response.text();
+    log.info('Fetched product page', { finalUrl: currentUrl.href, redirectChain });
     return { html, finalUrl: currentUrl } as const;
   }
 
-  throw new ProductFetchError('Слишком много редиректов при загрузке товара.', 502);
+  throw new ProductFetchError('Слишком много редиректов при загрузке товара.', 502, {
+    context: { redirectChain },
+  });
 };
 
-export const parseWildberriesProduct = async (targetUrl: URL): Promise<ParsedProduct | null> => {
+export const parseWildberriesProduct = async (
+  targetUrl: URL,
+  logger?: ParseLogger,
+): Promise<ParsedProduct | null> => {
+  const log = resolveLogger(logger);
   const article = targetUrl.pathname.match(/(\d+)/g)?.pop();
   if (!article) return null;
 
@@ -87,6 +117,8 @@ export const parseWildberriesProduct = async (targetUrl: URL): Promise<ParsedPro
   const sizes = (product.sizes ?? [])
     .map((size: any) => size.name ?? size.origName ?? size.optionName)
     .filter(Boolean);
+
+  log.info('Parsed Wildberries product from API', { url: targetUrl.href, article });
 
   return {
     title: product.name ?? 'Товар Wildberries',
