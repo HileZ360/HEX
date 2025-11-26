@@ -7,6 +7,34 @@ import { Clipboard, ArrowRight, Shirt, Camera, Sparkles, CheckCircle2 } from 'lu
 import { motion, useScroll, useTransform } from 'framer-motion';
 import clsx from 'clsx';
 
+const supportedHosts = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'];
+
+const normalizeMarketplaceUrl = (rawUrl: string) => {
+  const attemptParse = (value: string) => {
+    try {
+      return new URL(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const trimmed = rawUrl.trim();
+  let parsed = attemptParse(trimmed);
+
+  if (!parsed) {
+    parsed = attemptParse(`https://${trimmed}`);
+  }
+
+  if (!parsed) return { normalizedUrl: null, isSupportedMarketplace: false };
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isSupportedMarketplace = supportedHosts.some(
+    (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
+  );
+
+  return { normalizedUrl: parsed.toString(), isSupportedMarketplace };
+};
+
 export default function HomePage() {
   const navigate = useNavigate();
   const [url, setUrl] = useState('');
@@ -16,32 +44,25 @@ export default function HomePage() {
   const y2 = useTransform(scrollY, [0, 500], [0, -150]);
 
   const handleTryOn = () => {
-    const trimmed = url.trim();
-
-    if (!trimmed) {
+    if (!url.trim()) {
       setError('Введите ссылку на товар');
       return;
     }
 
-    try {
-      const normalized = new URL(trimmed).toString();
-      const hostname = new URL(normalized).hostname.toLowerCase();
-      const supportedHosts = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'];
-      const isSupportedMarketplace = supportedHosts.some((domain) =>
-        hostname === domain || hostname.endsWith(`.${domain}`)
-      );
+    const { normalizedUrl, isSupportedMarketplace } = normalizeMarketplaceUrl(url);
 
-      if (!isSupportedMarketplace) {
-        setError('Мы пока поддерживаем только ссылки с wildberries.ru, ozon.ru и lamoda.ru');
-        return;
-      }
-
-      setError(null);
-      navigate(`/try-on?url=${encodeURIComponent(normalized)}`, { state: { url: normalized } });
-    } catch (err) {
-      console.error('Invalid URL', err);
+    if (!normalizedUrl) {
       setError('Некорректный URL. Проверьте ссылку на маркетплейс.');
+      return;
     }
+
+    if (!isSupportedMarketplace) {
+      setError('Мы пока поддерживаем только ссылки с wildberries.ru, ozon.ru и lamoda.ru');
+      return;
+    }
+
+    setError(null);
+    navigate(`/try-on?url=${encodeURIComponent(normalizedUrl)}`, { state: { url: normalizedUrl } });
   };
 
   const handlePaste = async () => {
