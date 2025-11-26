@@ -8,6 +8,7 @@ import { ALLOWED_MARKETPLACE_DOMAINS, parseProductFromUrl } from './productParse
 const AVAILABLE_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
 const TRY_ON_TIMEOUT_MS = Number(process.env.TRY_ON_TIMEOUT_MS ?? 20000);
 const TRY_ON_API_URL = process.env.TRY_ON_API_URL;
+const TRY_ON_3D_API_URL = process.env.TRY_ON_3D_API_URL ?? TRY_ON_API_URL;
 const TRY_ON_API_TOKEN = process.env.TRY_ON_API_TOKEN;
 const TRY_ON_PROVIDER_TIMEOUT_MS = Number(process.env.TRY_ON_PROVIDER_TIMEOUT_MS ?? 12000);
 
@@ -521,24 +522,126 @@ const run3DTryOn = async ({
 }) => {
   throwIfAborted(signal);
 
-  await waitWithSignal(600, signal); // normalize body params
-  await waitWithSignal(900, signal); // mesh generation
-  await waitWithSignal(700, signal); // rendering
+  if (!TRY_ON_3D_API_URL) {
+    throw new TryOnProviderError(500, 'Сервис 3D-примерки не настроен. Обратитесь к администратору.');
+  }
 
-  const recommendedSize = estimateRecommendedSize({ height, weight, chest, waist, hips, fallbackSize: suggestedSize });
-  const fitMetrics = buildFitMetrics({ chest, waist, hips, recommendedSize });
+  const providerPayload: Record<string, unknown> = {
+    gender,
+    height,
+    weight,
+    chest,
+    waist,
+    hips,
+  };
+
+  if (suggestedSize) {
+    providerPayload.suggestedSize = suggestedSize;
+  }
+
+  const fetchSignal = buildBoundedSignal(signal, TRY_ON_PROVIDER_TIMEOUT_MS);
+
+  let response: Response;
+
+  try {
+    response = await fetch(TRY_ON_3D_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(TRY_ON_API_TOKEN ? { Authorization: `Bearer ${TRY_ON_API_TOKEN}` } : undefined),
+      },
+      body: JSON.stringify(providerPayload),
+      signal: fetchSignal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw abortError('Processing aborted');
+    }
+
+    throw new TryOnProviderError(502, 'Сервис 3D-примерки недоступен. Попробуйте позже.');
+  }
+
+  if (!response.ok) {
+    let errorMessage = 'Сервис 3D-примерки вернул ошибку.';
+
+    try {
+      const payload = await response.json();
+      if (typeof payload?.message === 'string') errorMessage = payload.message;
+      else if (typeof payload?.error === 'string') errorMessage = payload.error;
+    } catch {
+      const text = await response.text().catch(() => '');
+      if (text) errorMessage = text;
+    }
+
+    const statusCode = response.status >= 500 ? 502 : response.status;
+    throw new TryOnProviderError(statusCode || 502, errorMessage);
+  }
+
+  let payload: any;
+
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TryOnProviderError(502, 'Некорректный ответ сервиса 3D-примерки.');
+  }
+
+  const recommendedSize =
+    normalizeSize(payload?.recommendedSize ?? suggestedSize) ||
+    estimateRecommendedSize({ height, weight, chest, waist, hips, fallbackSize: suggestedSize });
+
+  const fitMetrics = Array.isArray(payload?.fitMetrics)
+    ? payload.fitMetrics
+        .filter((metric: any) => metric?.label && metric?.status)
+        .map(
+          (metric: any): FitMetric => ({
+            label: String(metric.label),
+            status: String(metric.status),
+            score: typeof metric.score === 'number' ? metric.score : 65,
+            detail: metric.detail ? String(metric.detail) : undefined,
+          }),
+        )
+    : [];
 
   const confidenceBase = 0.78 + (gender === 'female' ? 0.02 : 0);
   const confidenceSpread = Math.min((weight + chest + waist + hips) / 800, 0.12);
-  const confidence = Number(Math.min(confidenceBase + confidenceSpread, 0.96).toFixed(2));
+  const confidenceFallback = Number(Math.min(confidenceBase + confidenceSpread, 0.96).toFixed(2));
+  const confidence = normalizeConfidence(payload?.confidence, confidenceFallback);
 
-  const renderedImage = `https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80&sat=-20&blend=${recommendedSize}`;
+  const renderCandidates = [
+    payload?.renderUrl,
+    payload?.renderedImage,
+    payload?.render,
+    payload?.imageUrl,
+    payload?.image,
+    payload?.renderBase64,
+  ];
+
+  let renderedImage: string | undefined;
+
+  for (const candidate of renderCandidates) {
+    if (typeof candidate !== 'string' || !candidate.trim()) continue;
+    const value = candidate.trim();
+
+    if (/^https?:\/\//i.test(value)) {
+      renderedImage = value;
+      break;
+    }
+
+    const renderBuffer = decodeBase64Buffer(value, 'render');
+    const persisted = await persistPreview({ buffer: renderBuffer, signal });
+    renderedImage = buildPreviewUrl(persisted.filename);
+    break;
+  }
+
+  const resolvedFitMetrics = fitMetrics.length
+    ? fitMetrics
+    : buildFitMetrics({ chest, waist, hips, recommendedSize });
 
   return {
     recommendedSize,
     confidence,
     renderedImage,
-    fitMetrics,
+    fitMetrics: resolvedFitMetrics,
     status: 'completed' as const,
     statusMessage: '3D-примерка завершена.',
   };

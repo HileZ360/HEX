@@ -5,6 +5,7 @@ import sharp from 'sharp';
 
 process.env.NODE_ENV = 'test';
 process.env.TRY_ON_API_URL = 'https://tryon.local/api';
+process.env.TRY_ON_3D_API_URL = 'https://tryon.local/api/3d';
 process.env.TRY_ON_PROVIDER_TIMEOUT_MS = '100';
 
 const serverPromise = import('../server/index').then((mod) => mod.default);
@@ -256,6 +257,119 @@ test('maps provider errors to 502 response', async () => {
 
     assert.equal(response.statusCode, 502);
     assert.match(response.json().message, /Unsupported image|Сервис примерки/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('sends body params to 3d provider and returns persisted render', async () => {
+  const originalFetch = global.fetch;
+  const renderBuffer = Buffer.from('3d-render');
+  let receivedPayload: any = null;
+
+  try {
+    global.fetch = async (_input: any, init: any) => {
+      receivedPayload = JSON.parse(init?.body);
+      return new Response(
+        JSON.stringify({
+          render: `data:image/png;base64,${renderBuffer.toString('base64')}`,
+          recommendedSize: 'XL',
+          fitMetrics: [{ label: 'По груди', status: 'Комфортно', score: 90, detail: 'Тест' }],
+          confidence: 0.91,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+
+    const server = await serverPromise;
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/3d',
+      payload: {
+        gender: 'female',
+        height: 168,
+        weight: 60,
+        chest: 88,
+        waist: 68,
+        hips: 94,
+        suggestedSize: 'M',
+      },
+      headers: { 'content-type': 'application/json' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(receivedPayload, {
+      gender: 'female',
+      height: 168,
+      weight: 60,
+      chest: 88,
+      waist: 68,
+      hips: 94,
+      suggestedSize: 'M',
+    });
+
+    const data = response.json();
+    assert.equal(data.recommendedSize, 'XL');
+    assert.equal(data.fitMetrics[0].label, 'По груди');
+    assert.ok(/^\/api\/tryon\/2d\/preview\//.test(data.renderedImage));
+    assert.ok(!String(response.payload).includes('unsplash'));
+
+    const previewResponse = await server.inject({ method: 'GET', url: data.renderedImage });
+    const previewBuffer = Buffer.isBuffer(previewResponse.rawPayload)
+      ? (previewResponse.rawPayload as Buffer)
+      : Buffer.from(previewResponse.payload as string, 'binary');
+
+    assert.equal(previewBuffer.toString('base64'), renderBuffer.toString('base64'));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('returns validation errors for invalid 3d payload', async () => {
+  const server = await serverPromise;
+  const response = await server.inject({
+    method: 'POST',
+    url: '/api/tryon/3d',
+    payload: { gender: 'unknown', height: 100, weight: 20 },
+    headers: { 'content-type': 'application/json' },
+  });
+
+  assert.equal(response.statusCode, 400);
+  const payload = response.json();
+  assert.ok(payload.errors.gender);
+  assert.ok(payload.errors.chest);
+  assert.match(payload.message, /Проверьте корректность/);
+});
+
+test('returns 504 when 3d provider exceeds timeout', async () => {
+  const originalFetch = global.fetch;
+
+  try {
+    global.fetch = (_input: any, init: any) =>
+      new Promise((_, reject) => {
+        const signal: AbortSignal | undefined = init?.signal;
+        if (signal) {
+          const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            const error: any = new Error('Aborted');
+            error.name = 'AbortError';
+            reject(error);
+          };
+
+          signal.addEventListener('abort', onAbort);
+        }
+      });
+
+    const server = await serverPromise;
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/3d',
+      payload: { gender: 'male', height: 180, weight: 80, chest: 100, waist: 85, hips: 100 },
+      headers: { 'content-type': 'application/json' },
+    });
+
+    assert.equal(response.statusCode, 504);
+    assert.match(response.json().message, /Превышено время ожидания/);
   } finally {
     global.fetch = originalFetch;
   }
