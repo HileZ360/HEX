@@ -4,7 +4,31 @@ import { parseProductFromUrl } from './server/productParser';
 
 function productApiMock(): PluginOption {
   const handler = async (req: any, res: any, next: () => void) => {
-    if (!req.url?.startsWith('/api/product/parse')) {
+    if (!req.url) {
+      return next();
+    }
+
+    const sendJson = (status: number, body: Record<string, unknown>) => {
+      res.statusCode = status;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(body));
+    };
+
+    if (req.method === 'POST' && ['/api/tryon/2d', '/api/tryon/3d'].includes(req.url)) {
+      const is3D = req.url.endsWith('/3d');
+
+      const responseBody = {
+        recommendedSize: 'M',
+        confidence: 0.92,
+        ...(is3D
+          ? { renderedImage: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80' }
+          : { imageUrl: 'https://images.unsplash.com/photo-1512436991641-6745cdb1723f?w=1200&auto=format&fit=crop&q=80' }),
+      };
+
+      return sendJson(200, responseBody);
+    }
+
+    if (!req.url.startsWith('/api/product/parse')) {
       return next();
     }
 
@@ -13,21 +37,15 @@ function productApiMock(): PluginOption {
       const targetUrl = requestUrl.searchParams.get('url');
 
       if (!targetUrl) {
-        res.statusCode = 400;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'Missing url query param' }));
+        sendJson(400, { error: 'Missing url query param' });
         return;
       }
 
       const parsedProduct = parseProductFromUrl(targetUrl);
 
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify(parsedProduct));
+      sendJson(200, parsedProduct);
     } catch (error: any) {
-      res.statusCode = 500;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: error?.message ?? 'Failed to parse product' }));
+      sendJson(500, { error: error?.message ?? 'Failed to parse product' });
     }
   };
 
