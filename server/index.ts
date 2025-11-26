@@ -305,7 +305,13 @@ server.get('/api/product/parse', async (request, reply) => {
     });
   } catch (error: any) {
     request.log.error(error);
-    reply.code(500).send({ error: error?.message ?? 'Failed to parse product' });
+    const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+    const message =
+      statusCode === 504
+        ? 'Превышено время ожидания загрузки товара'
+        : error?.message ?? 'Failed to parse product';
+
+    reply.code(statusCode).send({ error: message });
   }
 });
 

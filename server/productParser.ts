@@ -209,6 +209,13 @@ const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct => {
   };
 };
 
+class ProductFetchError extends Error {
+  constructor(message: string, public statusCode: number) {
+    super(message);
+    this.name = 'ProductFetchError';
+  }
+}
+
 export async function parseProductFromUrl(inputUrl: string): Promise<ParsedProduct> {
   const targetUrl = new URL(inputUrl);
 
@@ -217,11 +224,34 @@ export async function parseProductFromUrl(inputUrl: string): Promise<ParsedProdu
     if (wbProduct) return wbProduct;
   }
 
-  const response = await fetch(targetUrl, { headers: { 'user-agent': USER_AGENT } });
-  if (!response.ok) {
-    throw new Error(`Не удалось загрузить страницу товара: ${response.status}`);
-  }
+  const controller = new AbortController();
+  const timeoutMs = 7000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  const html = await response.text();
-  return parseHtmlProduct(html, targetUrl);
+  try {
+    const response = await fetch(targetUrl, {
+      headers: { 'user-agent': USER_AGENT },
+      signal: controller.signal,
+      redirect: 'error',
+    });
+
+    if (!response.ok) {
+      throw new ProductFetchError(`Не удалось загрузить страницу товара: ${response.status}`, 502);
+    }
+
+    const html = await response.text();
+    return parseHtmlProduct(html, targetUrl);
+  } catch (error: any) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ProductFetchError('Превышено время ожидания загрузки товара', 504);
+    }
+
+    if (error instanceof ProductFetchError) {
+      throw error;
+    }
+
+    throw new ProductFetchError('Ошибка загрузки страницы товара', 502);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
