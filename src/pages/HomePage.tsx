@@ -26,13 +26,13 @@ export default function HomePage() {
     try {
       const normalized = new URL(trimmed).toString();
       const hostname = new URL(normalized).hostname.toLowerCase();
-      const supportedHosts = ['wildberries.ru', 'ozon.ru'];
+      const supportedHosts = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'];
       const isSupportedMarketplace = supportedHosts.some((domain) =>
         hostname === domain || hostname.endsWith(`.${domain}`)
       );
 
       if (!isSupportedMarketplace) {
-        setError('Мы пока поддерживаем только ссылки с wildberries.ru и ozon.ru');
+        setError('Мы пока поддерживаем только ссылки с wildberries.ru, ozon.ru и lamoda.ru');
         return;
       }
 
@@ -178,8 +178,8 @@ export default function HomePage() {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-hex-primary via-violet-400 to-hex-secondary"></div>
                 <div className="flex flex-col gap-5">
                   <div className="relative">
-                    <Input 
-                      placeholder="Вставьте ссылку на товар (WB, Ozon)"
+                    <Input
+                      placeholder="Вставьте ссылку на товар (WB, Ozon, Lamoda)"
                       value={url}
                       onChange={(e) => {
                         setUrl(e.target.value);
