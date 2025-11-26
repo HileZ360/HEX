@@ -124,7 +124,7 @@ export function TryOn2DModal({
         setUploadMessage(serverMessage);
       }
 
-      const finalImage = data?.imageUrl || data?.image || data?.renderedImage;
+      const finalImage = data?.previewUrl || data?.imageUrl || data?.image || data?.renderedImage;
       if (!finalImage) {
         throw new Error('Сервер не вернул результат примерки.');
       }

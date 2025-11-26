@@ -53,7 +53,7 @@ curl -G "http://localhost:4000/api/product/parse" \
 ### Структура успешного ответа
 ```json
 {
-  "imageUrl": "data:image/jpeg;base64,...",
+  "previewUrl": "/api/tryon/2d/preview/7e5a...",
   "recommendedSize": "M",
   "confidence": 0.9,
   "recommendation": "Рекомендуем размер M: примерка учла пропорции силуэта и плотность ткани.",
@@ -61,6 +61,9 @@ curl -G "http://localhost:4000/api/product/parse" \
   "statusMessage": "Примерка успешно завершена."
 }
 ```
+
+- `previewUrl` — ссылка на сжатый предпросмотр, отдаваемый CDN/прокси. Файл ресайзится и сохраняется во временное хранилище;
+  ссылка действует, пока файл доступен на сервере.
 
 ### Ошибки
 - `400 Bad Request` — поле `image` отсутствует/неверно названо или MIME не является изображением.
