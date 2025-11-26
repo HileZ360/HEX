@@ -323,9 +323,10 @@ server.get('/api/product/parse', async (request, reply) => {
   );
 
   if (!isHttps || !isAllowedDomain) {
+    const allowedList = ALLOWED_MARKETPLACE_DOMAINS.join(', ');
     reply
       .code(400)
-      .send({ error: 'Неподдерживаемый источник товара. Используйте HTTPS-ссылки wildberries.ru, ozon.ru или lamoda.ru.' });
+      .send({ error: `Неподдерживаемый источник товара. Используйте HTTPS-ссылки ${allowedList}.` });
     return;
   }
 
