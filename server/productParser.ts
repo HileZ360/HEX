@@ -1,132 +1,227 @@
+import { load } from 'cheerio';
 import { URL } from 'node:url';
 
-type ProductParseResult = {
+export type ParsedProduct = {
   title: string;
-  article?: string;
-  price: number;
-  originalPrice?: number;
-  discount?: number;
-  media?: { images: string[] };
-  images?: string[];
-  similar?: { title?: string; price?: number; image?: string }[];
-  sizes?: string[];
-  size_chart?: { sizes: string[] };
-  recommendation?: {
-    size?: string;
-    confidence?: number;
-    notes?: string[];
-  };
+  article?: string | null;
+  price?: number | null;
+  originalPrice?: number | null;
+  discount?: number | null;
+  images: string[];
+  similar: { title?: string; price?: number; image?: string }[];
+  sizes: string[];
+  recommendedSize?: string | null;
+  recommendationConfidence?: number | null;
+  fitNotes?: string[];
   marketplace?: string;
 };
 
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
+
 const FALLBACK_IMAGES = [
-  'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=1200&q=80',
-  'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1200&q=80',
-  'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=1200&q=80',
+  'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=1200&q=80&auto=format&fit=crop',
+  'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1200&q=80&auto=format&fit=crop',
 ];
 
-const PRODUCT_MOCKS: Record<string, Partial<ProductParseResult>> = {
-  'www.wildberries.ru': {
-    title: 'Пуховик утепленный',
-    article: 'WB-2048',
-    price: 7490,
-    originalPrice: 9990,
-    media: {
-      images: [
-        'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=1200&q=80',
-        'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1200&q=80',
-        'https://images.unsplash.com/photo-1521572295260-07e6d2d48db0?w=1200&q=80',
-      ],
-    },
-    similar: [
-      {
-        title: 'Пуховик с капюшоном',
-        price: 7990,
-        image: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80',
-      },
-      {
-        title: 'Пальто зимнее',
-        price: 6990,
-        image: 'https://images.unsplash.com/photo-1521572295260-07e6d2d48db0?w=600&q=80',
-      },
-    ],
-    size_chart: { sizes: ['XS', 'S', 'M', 'L', 'XL'] },
-    recommendation: {
-      size: 'M',
-      confidence: 0.86,
-      notes: ['Утепленная модель, свободная посадка'],
-    },
-  },
-  'www.ozon.ru': {
-    title: 'Толстовка унисекс',
-    article: 'OZ-4821',
-    price: 3290,
-    originalPrice: 4590,
-    images: [
-      'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1200&q=80',
-      'https://images.unsplash.com/photo-1521572295260-07e6d2d48db0?w=1200&q=80',
-    ],
-    similar: [
-      {
-        title: 'Худи базовое',
-        price: 2990,
-        image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&q=80',
-      },
-    ],
-    sizes: ['XS', 'S', 'M', 'L'],
-    recommendation: {
-      size: 'S',
-      confidence: 0.73,
-      notes: ['Слегка oversize, лучше брать размер в размер'],
-    },
-  },
-  'www.lamoda.ru': {
-    title: 'Платье миди',
-    article: 'LM-9081',
-    price: 5590,
-    originalPrice: 7990,
-    media: {
-      images: [
-        'https://images.unsplash.com/photo-1521572295260-07e6d2d48db0?w=1200&q=80',
-        'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1200&q=80',
-      ],
-    },
-    sizes: ['40', '42', '44', '46'],
-    recommendation: {
-      size: '42',
-      confidence: 0.64,
-      notes: ['Ткань эластичная, может слегка тянуться'],
-    },
-  },
+const ensureNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const numeric = Number(value.replace(/[^0-9.,-]/g, '').replace(',', '.'));
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return undefined;
 };
 
-export function parseProductFromUrl(inputUrl: string): ProductParseResult {
-  const targetUrl = new URL(inputUrl);
-  const host = targetUrl.hostname;
-  const mock = PRODUCT_MOCKS[host] ?? {};
+const computeDiscount = (price?: number, originalPrice?: number) => {
+  if (!price || !originalPrice || originalPrice <= 0) return undefined;
+  return Math.round((1 - price / originalPrice) * 100);
+};
 
-  const price = mock.price ?? 4490;
-  const originalPrice = mock.originalPrice ?? 5490;
-  const discount = mock.discount ?? Math.round((1 - price / originalPrice) * 100);
-  const images = mock.media?.images ?? mock.images ?? FALLBACK_IMAGES;
-  const sizes = mock.size_chart?.sizes ?? mock.sizes ?? ['XS', 'S', 'M', 'L'];
+const normalizeImages = (images: unknown): string[] => {
+  if (!images) return [];
+  const arrayImages = Array.isArray(images) ? images : [images];
+  return arrayImages
+    .map((img) => (typeof img === 'string' ? img : undefined))
+    .filter((img): img is string => Boolean(img));
+};
+
+const safeJsonParse = (content: string) => {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    return null;
+  }
+};
+
+const findProductObject = (value: unknown): any | null => {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const product = findProductObject(item);
+      if (product) return product;
+    }
+    return null;
+  }
+
+  if (typeof value === 'object') {
+    const typed = value as Record<string, any>;
+    const type = typed['@type'] ?? typed.type;
+    if (typeof type === 'string' && type.toLowerCase().includes('product')) {
+      return typed;
+    }
+
+    for (const key of Object.keys(typed)) {
+      const product = findProductObject(typed[key]);
+      if (product) return product;
+    }
+  }
+
+  return null;
+};
+
+const extractJsonLdProduct = ($: ReturnType<typeof load>) => {
+  const scripts = $('script[type="application/ld+json"]');
+  for (const element of scripts.toArray()) {
+    const content = $(element).contents().text();
+    const parsed = safeJsonParse(content);
+    const product = findProductObject(parsed);
+    if (product) return product;
+  }
+  return null;
+};
+
+const extractMetaContent = ($: ReturnType<typeof load>, selectors: string[]) => {
+  for (const selector of selectors) {
+    const value = $(selector).attr('content')?.trim();
+    if (value) return value;
+  }
+  return undefined;
+};
+
+const parseWildberriesImages = (id: number, count: number) => {
+  const volume = Math.floor(id / 100000);
+  const part = Math.floor(id / 1000);
+  const host = String((id % 10) + 1).padStart(2, '0');
+  const maxImages = Math.min(count, 8);
+  return Array.from({ length: maxImages }, (_, index) =>
+    `https://basket-${host}.wb.ru/vol${volume}/part${part}/${id}/images/big/${index + 1}.jpg`
+  );
+};
+
+const parseWildberriesProduct = async (targetUrl: URL): Promise<ParsedProduct | null> => {
+  const article = targetUrl.pathname.match(/(\d+)/g)?.pop();
+  if (!article) return null;
+
+  const apiUrl = `https://card.wb.ru/cards/v2/detail?dest=-1257786&nm=${article}`;
+  const response = await fetch(apiUrl, { headers: { 'user-agent': USER_AGENT } });
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  const product = data?.data?.products?.[0];
+  if (!product) return null;
+
+  const price = product.salePriceU ? Math.round(product.salePriceU / 100) : undefined;
+  const originalPrice = product.priceU ? Math.round(product.priceU / 100) : undefined;
+  const discount = computeDiscount(price, originalPrice) ?? product.sale ?? undefined;
+  const images = parseWildberriesImages(product.id, product.pics ?? 1);
+  const sizes = (product.sizes ?? [])
+    .map((size: any) => size.name ?? size.origName ?? size.optionName)
+    .filter(Boolean);
 
   return {
-    title: mock.title ?? 'Товар с маркетплейса',
-    article: mock.article ?? targetUrl.pathname.split('/').filter(Boolean).pop(),
-    price,
-    originalPrice,
-    discount,
-    media: { images },
-    images,
-    similar: mock.similar ?? [],
+    title: product.name ?? 'Товар Wildberries',
+    article,
+    price: price ?? null,
+    originalPrice: originalPrice ?? null,
+    discount: discount ?? null,
+    images: images.length ? images : FALLBACK_IMAGES,
+    similar: [],
     sizes,
-    size_chart: { sizes },
-    recommendation: mock.recommendation ?? {
-      size: 'M',
-      confidence: 0.55,
-      notes: ['Рекомендации рассчитаны по умолчанию'],
-    },
-    marketplace: host,
+    recommendedSize: null,
+    recommendationConfidence: null,
+    fitNotes: [],
+    marketplace: targetUrl.hostname,
   };
+};
+
+const extractPriceFromOffers = (offers: any) => {
+  if (!offers) return { price: undefined as number | undefined, originalPrice: undefined as number | undefined };
+
+  const offersArray = Array.isArray(offers) ? offers : [offers];
+  for (const offer of offersArray) {
+    const price = ensureNumber(offer?.price ?? offer?.priceCurrency);
+    const original = ensureNumber(offer?.priceSpecification?.price ?? offer?.listPrice);
+    if (price || original) {
+      return { price, originalPrice: original };
+    }
+  }
+
+  return { price: undefined, originalPrice: undefined };
+};
+
+const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct => {
+  const $ = load(html);
+  const product = extractJsonLdProduct($) ?? {};
+
+  const { price: offerPrice, originalPrice } = extractPriceFromOffers(product.offers ?? product.offer);
+  const metaPrice = extractMetaContent($, ['meta[property="product:price:amount"]', 'meta[itemprop="price"]']);
+  const price = offerPrice ?? ensureNumber(metaPrice);
+
+  const article =
+    product.sku ??
+    product.mpn ??
+    extractMetaContent($, ['meta[property="product:retailer_item_id"]', 'meta[itemprop="sku"]']) ??
+    targetUrl.pathname.split('/').filter(Boolean).pop();
+
+  const discount = product.discount ?? computeDiscount(price, originalPrice);
+
+  const images = [
+    ...normalizeImages(product.image),
+    ...normalizeImages(extractMetaContent($, ['meta[property="og:image"]'])),
+  ].filter(Boolean);
+
+  const sizes = normalizeImages(product?.offers?.size ?? product?.size) ?? [];
+  const similarRaw = (product.isSimilarTo ?? []) as any[];
+  const similar = Array.isArray(similarRaw)
+    ? similarRaw
+        .map((item) => ({
+          title: item?.name ?? item?.title,
+          price: ensureNumber(item?.offers?.price ?? item?.price),
+          image: normalizeImages(item?.image)[0],
+        }))
+        .filter((item) => item.title || item.image)
+    : [];
+
+  return {
+    title: product.name ?? extractMetaContent($, ['meta[property="og:title"]']) ?? $('title').text() ?? 'Товар',
+    article: article ?? null,
+    price: price ?? null,
+    originalPrice: originalPrice ?? null,
+    discount: discount ?? null,
+    images: images.length ? images : FALLBACK_IMAGES,
+    similar,
+    sizes: sizes.length ? sizes : [],
+    recommendedSize: product?.sizeRecommendation ?? null,
+    recommendationConfidence: product?.recommendationConfidence ?? null,
+    fitNotes: product?.fitNotes ?? [],
+    marketplace: targetUrl.hostname,
+  };
+};
+
+export async function parseProductFromUrl(inputUrl: string): Promise<ParsedProduct> {
+  const targetUrl = new URL(inputUrl);
+
+  if (targetUrl.hostname.includes('wildberries')) {
+    const wbProduct = await parseWildberriesProduct(targetUrl);
+    if (wbProduct) return wbProduct;
+  }
+
+  const response = await fetch(targetUrl, { headers: { 'user-agent': USER_AGENT } });
+  if (!response.ok) {
+    throw new Error(`Не удалось загрузить страницу товара: ${response.status}`);
+  }
+
+  const html = await response.text();
+  return parseHtmlProduct(html, targetUrl);
 }
