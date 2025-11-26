@@ -48,6 +48,185 @@ const waitWithSignal = (ms: number, signal: AbortSignal) =>
     signal.addEventListener('abort', onAbort);
   });
 
+type FitMetric = {
+  label: string;
+  status: string;
+  score: number;
+  detail?: string;
+};
+
+const normalizeNumber = (value: unknown) => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim()) return Number(value);
+  return undefined;
+};
+
+const buildValidationError = (message: string, errors?: Record<string, string>) => ({ message, errors });
+
+const validate3DBody = (body: any) => {
+  const errors: Record<string, string> = {};
+
+  const gender = typeof body?.gender === 'string' ? body.gender.toLowerCase() : undefined;
+  if (!gender || (gender !== 'male' && gender !== 'female')) {
+    errors.gender = 'Укажите пол: male или female.';
+  }
+
+  const numericFields: Array<{ key: keyof typeof body; label: string; min?: number; max?: number }> = [
+    { key: 'height', label: 'Рост', min: 120, max: 230 },
+    { key: 'weight', label: 'Вес', min: 30, max: 250 },
+    { key: 'chest', label: 'Грудь', min: 60, max: 160 },
+    { key: 'waist', label: 'Талия', min: 50, max: 160 },
+    { key: 'hips', label: 'Бёдра', min: 60, max: 180 },
+  ];
+
+  const parsed: Record<string, number> = {};
+
+  for (const field of numericFields) {
+    const parsedValue = normalizeNumber(body?.[field.key]);
+    if (parsedValue === undefined || Number.isNaN(parsedValue)) {
+      errors[field.key] = `${field.label}: введите число.`;
+      continue;
+    }
+
+    if (field.min !== undefined && parsedValue < field.min) {
+      errors[field.key] = `${field.label}: значение не может быть ниже ${field.min}.`;
+      continue;
+    }
+
+    if (field.max !== undefined && parsedValue > field.max) {
+      errors[field.key] = `${field.label}: значение не может быть выше ${field.max}.`;
+      continue;
+    }
+
+    parsed[field.key] = parsedValue;
+  }
+
+  const saveParams = body?.saveParams === true || body?.saveParams === 'true';
+  const suggestedSize = normalizeSize(body?.suggestedSize);
+
+  return {
+    errors,
+    parsed: {
+      gender: gender as 'male' | 'female',
+      height: parsed.height,
+      weight: parsed.weight,
+      chest: parsed.chest,
+      waist: parsed.waist,
+      hips: parsed.hips,
+      saveParams,
+      suggestedSize,
+    },
+  } as const;
+};
+
+const estimateRecommendedSize = ({ height, weight, chest, waist, hips, fallbackSize }: { height: number; weight: number; chest: number; waist: number; hips: number; fallbackSize?: string }) => {
+  const baseScore = weight * 0.4 + height * 0.2 + chest * 0.2 + waist * 0.1 + hips * 0.1;
+  const normalized = Math.min(Math.max((baseScore - 200) / 140, 0), 1);
+  const sizeIndex = Math.round(normalized * (AVAILABLE_SIZES.length - 1));
+  return AVAILABLE_SIZES[sizeIndex] ?? fallbackSize ?? 'M';
+};
+
+const buildFitMetrics = ({
+  chest,
+  waist,
+  hips,
+  recommendedSize,
+}: {
+  chest: number;
+  waist: number;
+  hips: number;
+  recommendedSize: string;
+}): FitMetric[] => {
+  const baseline: Record<string, { chest: number; waist: number; hips: number }> = {
+    XXS: { chest: 78, waist: 60, hips: 82 },
+    XS: { chest: 82, waist: 64, hips: 86 },
+    S: { chest: 86, waist: 68, hips: 90 },
+    M: { chest: 92, waist: 74, hips: 96 },
+    L: { chest: 98, waist: 80, hips: 102 },
+    XL: { chest: 104, waist: 86, hips: 108 },
+    XXL: { chest: 110, waist: 92, hips: 114 },
+  };
+
+  const target = baseline[recommendedSize as keyof typeof baseline] ?? baseline.M;
+
+  const buildStatus = (value: number, reference: number) => {
+    const delta = value - reference;
+    if (Math.abs(delta) <= 3) return { status: 'Комфортно', score: 82 };
+    if (delta > 3 && delta <= 8) return { status: 'Плотно', score: 65 };
+    if (delta < -3 && delta >= -8) return { status: 'Свободно', score: 70 };
+    return { status: delta > 0 ? 'На грани' : 'Есть запас', score: 55 };
+  };
+
+  const chestStatus = buildStatus(chest, target.chest);
+  const waistStatus = buildStatus(waist, target.waist);
+  const hipsStatus = buildStatus(hips, target.hips);
+
+  return [
+    {
+      label: 'По груди',
+      status: chestStatus.status,
+      score: chestStatus.score,
+      detail: `Обхват груди ${chest} см vs. размерная сетка ${target.chest} см`,
+    },
+    {
+      label: 'По талии',
+      status: waistStatus.status,
+      score: waistStatus.score,
+      detail: `Талия ${waist} см vs. ${target.waist} см в выбранном размере`,
+    },
+    {
+      label: 'По бёдрам',
+      status: hipsStatus.status,
+      score: hipsStatus.score,
+      detail: `Бёдра ${hips} см vs. ${target.hips} см по сетке`,
+    },
+  ];
+};
+
+const run3DTryOn = async ({
+  gender,
+  height,
+  weight,
+  chest,
+  waist,
+  hips,
+  suggestedSize,
+  signal,
+}: {
+  gender: 'male' | 'female';
+  height: number;
+  weight: number;
+  chest: number;
+  waist: number;
+  hips: number;
+  suggestedSize?: string;
+  signal: AbortSignal;
+}) => {
+  throwIfAborted(signal);
+
+  await waitWithSignal(600, signal); // normalize body params
+  await waitWithSignal(900, signal); // mesh generation
+  await waitWithSignal(700, signal); // rendering
+
+  const recommendedSize = estimateRecommendedSize({ height, weight, chest, waist, hips, fallbackSize: suggestedSize });
+  const fitMetrics = buildFitMetrics({ chest, waist, hips, recommendedSize });
+
+  const confidenceBase = 0.78 + (gender === 'female' ? 0.02 : 0);
+  const confidenceSpread = Math.min((weight + chest + waist + hips) / 800, 0.12);
+  const confidence = Number(Math.min(confidenceBase + confidenceSpread, 0.96).toFixed(2));
+
+  const renderedImage = `https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80&sat=-20&blend=${recommendedSize}`;
+
+  return {
+    recommendedSize,
+    confidence,
+    renderedImage,
+    fitMetrics,
+    status: 'completed' as const,
+    statusMessage: '3D-примерка завершена.',
+  };
+};
+
 const run2DTryOn = async ({
   imageBuffer,
   suggestedSize,
@@ -164,13 +343,44 @@ server.post('/api/tryon/2d', async (request, reply) => {
   }
 });
 
-server.post('/api/tryon/3d', async (_request, reply) => {
-  reply.send({
-    recommendedSize: 'M',
-    confidence: 0.92,
-    renderedImage:
-      'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80',
-  });
+server.post('/api/tryon/3d', async (request, reply) => {
+  try {
+    const { parsed, errors } = validate3DBody(request.body);
+
+    if (Object.keys(errors).length > 0) {
+      reply.code(400).send(buildValidationError('Проверьте корректность введённых параметров.', errors));
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TRY_ON_TIMEOUT_MS);
+
+    try {
+      const result = await run3DTryOn({
+        gender: parsed.gender!,
+        height: parsed.height!,
+        weight: parsed.weight!,
+        chest: parsed.chest!,
+        waist: parsed.waist!,
+        hips: parsed.hips!,
+        suggestedSize: parsed.suggestedSize,
+        signal: controller.signal,
+      });
+
+      reply.send(result);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (error: any) {
+    request.log.error(error);
+
+    if (error?.name === 'AbortError') {
+      reply.code(504).send({ message: 'Превышено время ожидания сервиса 3D-примерки. Попробуйте снова.' });
+      return;
+    }
+
+    reply.code(500).send({ message: 'Сервис 3D-примерки временно недоступен. Попробуйте позже.' });
+  }
 });
 
 const PORT = Number(process.env.PORT) || 4000;
