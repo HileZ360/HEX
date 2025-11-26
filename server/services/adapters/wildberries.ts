@@ -3,6 +3,7 @@ import { computeDiscount, ensureNumber } from '../../normalizers/pricing.js';
 import { extractSizes } from '../../normalizers/sizing.js';
 import { resolveLogger } from '../../logger.js';
 import type { ParsedProduct } from '../../types/product.js';
+import { ProductFetchError } from '../productFetchError.js';
 import { USER_AGENT } from '../http.js';
 import type { MarketplaceAdapter } from './types.js';
 
@@ -52,15 +53,41 @@ export const wildberriesAdapter: MarketplaceAdapter = {
     if (!article) return null;
 
     const apiUrl = `https://card.wb.ru/cards/v2/detail?dest=-1257786&nm=${article}`;
-    const response = await fetch(apiUrl, { headers: { 'user-agent': USER_AGENT } });
-    if (!response.ok) return null;
+    const controller = new AbortController();
+    const timeoutMs = 7000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const data = await response.json();
-    const product = data?.data?.products?.[0];
-    if (!product) return null;
+    try {
+      const response = await fetch(apiUrl, {
+        headers: { 'user-agent': USER_AGENT },
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
 
-    log.info('Parsed Wildberries product from API', { url: targetUrl.href, article });
+      const data = await response.json();
+      const product = data?.data?.products?.[0];
+      if (!product) return null;
 
-    return toParsedProduct(product, targetUrl);
+      log.info('Parsed Wildberries product from API', { url: targetUrl.href, article });
+
+      return toParsedProduct(product, targetUrl);
+    } catch (error: any) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
+          context: { url: apiUrl, article },
+        });
+      }
+
+      if (error instanceof ProductFetchError) {
+        throw error;
+      }
+
+      throw new ProductFetchError('Ошибка загрузки товара Wildberries', 502, {
+        cause: error,
+        context: { url: apiUrl, article },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
   },
 };
