@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
 import { Button } from './ui/Button';
 import { Camera, Upload, Check, RefreshCw } from 'lucide-react';
@@ -12,7 +12,13 @@ interface TryOn2DModalProps {
   suggestedConfidence?: number;
 }
 
-export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, suggestedConfidence }: TryOn2DModalProps) {
+export function TryOn2DModal({
+  isOpen,
+  onClose,
+  onComplete,
+  suggestedSize,
+  suggestedConfidence,
+}: TryOn2DModalProps) {
   const [step, setStep] = useState<'upload' | 'result'>('upload');
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -47,16 +53,26 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
     }
   };
 
-  const resetState = () => {
-    setStep('upload');
+  const clearResultState = () => {
     setResultImage(null);
     setResultRecommendation(undefined);
     setResultSize(suggestedSize);
     setResultConfidence(suggestedConfidence);
+  };
+
+  const resetState = () => {
+    setStep('upload');
+    clearResultState();
     setError(null);
     setUploadMessage(null);
     setIsSubmitting(false);
   };
+
+  useEffect(() => {
+    if (!isOpen) {
+      resetState();
+    }
+  }, [isOpen]);
 
   const handleFiles = (files: FileList | null | undefined) => {
     if (!files || files.length === 0) return;
@@ -74,6 +90,8 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
     }
 
     setError(null);
+    setStep('upload');
+    clearResultState();
     startTryOn(file);
   };
 
@@ -128,10 +146,10 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
   };
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
-      title={step === 'upload' ? "Загрузите ваше фото" : "2D примерка готова"}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={step === 'upload' ? 'Загрузите ваше фото' : '2D примерка готова'}
       className="max-w-2xl"
     >
       {step === 'upload' ? (
@@ -139,12 +157,12 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
           <p className="text-hex-gray text-center">
             Для лучшего результата используйте фото в полный рост на однотонном фоне
           </p>
-          
+
           <div
             className={clsx(
-              "border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-colors cursor-pointer relative",
-              isDragging ? "border-hex-primary bg-hex-primary/5" : "border-gray-200 hover:border-hex-primary/50",
-              isSubmitting && "opacity-70 pointer-events-none"
+              'border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-colors cursor-pointer relative',
+              isDragging ? 'border-hex-primary bg-hex-primary/5' : 'border-gray-200 hover:border-hex-primary/50',
+              isSubmitting && 'opacity-70 pointer-events-none'
             )}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -161,12 +179,8 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
             <div className="w-16 h-16 bg-hex-primary/10 rounded-full flex items-center justify-center mb-4 text-hex-primary">
               <Camera size={32} />
             </div>
-            <p className="text-lg font-medium text-hex-dark mb-2">
-              Перетащите файл сюда
-            </p>
-            <p className="text-sm text-hex-gray mb-6">
-              или нажмите, чтобы выбрать
-            </p>
+            <p className="text-lg font-medium text-hex-dark mb-2">Перетащите файл сюда</p>
+            <p className="text-sm text-hex-gray mb-6">или нажмите, чтобы выбрать</p>
             <Button icon={<Upload size={18} />} disabled={isSubmitting}>
               {isSubmitting ? 'Загружаем...' : 'Выбрать фото'}
             </Button>
@@ -200,7 +214,9 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
                 {resultSize && (
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-medium text-hex-dark">Размер {resultSize} (автоподбор)</span>
+                    <span className="text-xs font-medium text-hex-dark">
+                      Размер {resultSize} (автоподбор)
+                    </span>
                   </div>
                 )}
                 {resultRecommendation && (
@@ -209,7 +225,7 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
               </div>
             )}
           </div>
-          
+
           <div className="flex flex-col justify-center space-y-6">
             <div className="bg-green-50 border border-green-100 rounded-xl p-4 flex items-start gap-3">
               <div className="bg-green-100 p-1 rounded-full text-green-600 mt-0.5">
@@ -217,9 +233,7 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
               </div>
               <div>
                 <h4 className="font-medium text-green-900">Образ создан</h4>
-                <p className="text-sm text-green-700 mt-1">
-                  AI успешно наложил одежду на ваше фото
-                </p>
+                <p className="text-sm text-green-700 mt-1">AI успешно наложил одежду на ваше фото</p>
               </div>
             </div>
 
