@@ -1,12 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchWithRedirects, isAllowedMarketplace, ProductFetchError } from '../server/services/marketplace.js';
+import {
+  fetchMarketplaceProduct,
+  fetchWithRedirects,
+  isAllowedMarketplace,
+  ProductFetchError,
+} from '../server/services/marketplace.js';
 import { MemoryLogger } from './utils/memoryLogger.js';
 
 test('isAllowedMarketplace validates subdomains and root domains', () => {
   assert.equal(isAllowedMarketplace('ozon.ru'), true);
   assert.equal(isAllowedMarketplace('shop.ozon.ru'), true);
   assert.equal(isAllowedMarketplace('example.com'), false);
+});
+
+test('fetchMarketplaceProduct delegates to matching adapter', async () => {
+  const originalFetch = global.fetch;
+
+  try {
+    global.fetch = (async () =>
+      new Response(
+        JSON.stringify({ data: { products: [{ id: 111, name: 'Delegated', salePriceU: 1000, pics: 1 }] } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as any;
+
+    const result = await fetchMarketplaceProduct(new URL('https://wildberries.ru/catalog/111/detail.aspx'));
+    assert.ok(result);
+    assert.equal(result?.article, '111');
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('fetchWithRedirects throws on unsupported redirects', async () => {

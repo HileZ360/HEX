@@ -26,7 +26,7 @@ const normalizeSizeValue = (value: unknown): string | undefined => {
 
   if (value && typeof value === 'object') {
     const typed = value as Record<string, unknown>;
-    const candidate = typed.name ?? typed.size ?? typed.label ?? typed.title ?? typed.value;
+    const candidate = typed.name ?? typed.origName ?? typed.size ?? typed.label ?? typed.title ?? typed.value;
     if (typeof candidate === 'string' || typeof candidate === 'number') {
       const normalized = String(candidate).trim();
       return normalized || undefined;
