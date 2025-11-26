@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
 import { Button } from './ui/Button';
 import { Camera, Upload, Check, RefreshCw } from 'lucide-react';
@@ -47,16 +47,26 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
     }
   };
 
-  const resetState = () => {
-    setStep('upload');
+  const clearResultState = () => {
     setResultImage(null);
     setResultRecommendation(undefined);
     setResultSize(suggestedSize);
     setResultConfidence(suggestedConfidence);
+  };
+
+  const resetState = () => {
+    setStep('upload');
+    clearResultState();
     setError(null);
     setUploadMessage(null);
     setIsSubmitting(false);
   };
+
+  useEffect(() => {
+    if (!isOpen) {
+      resetState();
+    }
+  }, [isOpen]);
 
   const handleFiles = (files: FileList | null | undefined) => {
     if (!files || files.length === 0) return;
@@ -74,11 +84,8 @@ export function TryOn2DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
     }
 
     setError(null);
-    setResultImage(null);
-    setResultRecommendation(undefined);
-    setResultSize(suggestedSize);
-    setResultConfidence(suggestedConfidence);
     setStep('upload');
+    clearResultState();
     startTryOn(file);
   };
 
