@@ -1,22 +1,11 @@
 import { FALLBACK_IMAGES } from '../normalizers/media.js';
 import { resolveLogger, type ParseLogger } from '../logger.js';
+import { ProductFetchError } from './productFetchError.js';
 import { marketplaceAdapters, findAdapterByHostname } from './adapters/index.js';
 import { hostMatchesDomain } from './adapters/types.js';
 import { USER_AGENT } from './http.js';
 
-export class ProductFetchError extends Error {
-  public context: Record<string, unknown>;
-
-  constructor(
-    message: string,
-    public statusCode: number,
-    options?: { cause?: unknown; context?: Record<string, unknown> },
-  ) {
-    super(message, options?.cause ? { cause: options.cause } : undefined);
-    this.name = 'ProductFetchError';
-    this.context = options?.context ?? {};
-  }
-}
+export { ProductFetchError } from './productFetchError.js';
 
 export const ALLOWED_MARKETPLACE_DOMAINS = marketplaceAdapters.flatMap((adapter) => adapter.domains);
 
