@@ -1,11 +1,17 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import sharp from 'sharp';
 import { parseProductFromUrl } from './productParser';
 
 const AVAILABLE_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
 const TRY_ON_TIMEOUT_MS = 20000;
 
 const server = Fastify({ logger: true });
+const PREVIEW_DIR = path.join(process.cwd(), 'tmp', 'tryon-previews');
+const PREVIEW_ROUTE_PREFIX = '/api/tryon/2d/preview';
 
 server.register(multipart, {
   limits: {
@@ -14,6 +20,15 @@ server.register(multipart, {
   },
   throwFileSizeLimit: true,
 });
+
+let previewDirReady: Promise<void> | null = null;
+
+const ensurePreviewDir = () => {
+  if (!previewDirReady) {
+    previewDirReady = fs.mkdir(PREVIEW_DIR, { recursive: true }).then(() => undefined);
+  }
+  return previewDirReady;
+};
 
 const normalizeSize = (value?: string) => {
   const normalized = value?.trim().toUpperCase();
@@ -227,15 +242,38 @@ const run3DTryOn = async ({
   };
 };
 
+const resizePreview = async (imageBuffer: Buffer) => {
+  const { data, info } = await sharp(imageBuffer)
+    .rotate()
+    .resize({ width: 960, height: 1280, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 82, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+
+  return { buffer: data, info } as const;
+};
+
+const persistPreview = async ({ buffer, signal }: { buffer: Buffer; signal: AbortSignal }) => {
+  throwIfAborted(signal);
+  await ensurePreviewDir();
+
+  const id = randomUUID();
+  const filename = `${id}.jpg`;
+  const filepath = path.join(PREVIEW_DIR, filename);
+
+  await fs.writeFile(filepath, buffer);
+
+  return { id, filepath, filename } as const;
+};
+
+const buildPreviewUrl = (filename: string) => `${PREVIEW_ROUTE_PREFIX}/${filename.replace(/\.jpg$/, '')}`;
+
 const run2DTryOn = async ({
   imageBuffer,
   suggestedSize,
-  mimetype,
   signal,
 }: {
   imageBuffer: Buffer;
   suggestedSize?: string;
-  mimetype: string;
   signal: AbortSignal;
 }) => {
   throwIfAborted(signal);
@@ -248,8 +286,13 @@ const run2DTryOn = async ({
   const bufferImpact = Math.min(imageBuffer.length / (8 * 1024 * 1024), 1);
   const confidence = Number((0.82 + bufferImpact * 0.12 + sizeConfidenceBoost).toFixed(2));
 
+  const { buffer: previewBuffer } = await resizePreview(imageBuffer);
+  const persistedPreview = await persistPreview({ buffer: previewBuffer, signal });
+  const previewUrl = buildPreviewUrl(persistedPreview.filename);
+
   return {
-    imageUrl: `data:${mimetype};base64,${imageBuffer.toString('base64')}`,
+    previewUrl,
+    imageUrl: previewUrl,
     recommendedSize,
     confidence: Math.min(confidence, 0.97),
     recommendation: `Рекомендуем размер ${recommendedSize}: примерка учла пропорции силуэта и плотность ткани.`,
@@ -315,6 +358,24 @@ server.get('/api/product/parse', async (request, reply) => {
   }
 });
 
+server.get(`${PREVIEW_ROUTE_PREFIX}/:id`, async (request, reply) => {
+  const { id } = request.params as { id?: string };
+  if (!id || !/^[-a-f0-9]+$/i.test(id)) {
+    reply.code(400).send({ message: 'Укажите корректный идентификатор предпросмотра.' });
+    return;
+  }
+
+  const filepath = path.join(PREVIEW_DIR, `${id}.jpg`);
+
+  try {
+    const file = await fs.readFile(filepath);
+    reply.type('image/jpeg').send(file);
+  } catch (error: any) {
+    request.log.error(error);
+    reply.code(404).send({ message: 'Предпросмотр не найден или истёк.' });
+  }
+});
+
 server.post('/api/tryon/2d', async (request, reply) => {
   try {
     const file = await request.file();
@@ -342,7 +403,6 @@ server.post('/api/tryon/2d', async (request, reply) => {
       const result = await run2DTryOn({
         imageBuffer,
         suggestedSize,
-        mimetype: file.mimetype ?? 'image/jpeg',
         signal: controller.signal,
       });
 
