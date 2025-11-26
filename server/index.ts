@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import sharp from 'sharp';
-import { parseProductFromUrl } from './productParser';
+import { ALLOWED_MARKETPLACE_DOMAINS, parseProductFromUrl } from './productParser';
 
 const AVAILABLE_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
 const TRY_ON_TIMEOUT_MS = 20000;
@@ -99,21 +99,21 @@ const validate3DBody = (body: any) => {
   for (const field of numericFields) {
     const parsedValue = normalizeNumber(body?.[field.key]);
     if (parsedValue === undefined || Number.isNaN(parsedValue)) {
-      errors[field.key] = `${field.label}: введите число.`;
+      errors[field.key as string] = `${field.label}: введите число.`;
       continue;
     }
 
     if (field.min !== undefined && parsedValue < field.min) {
-      errors[field.key] = `${field.label}: значение не может быть ниже ${field.min}.`;
+      errors[field.key as string] = `${field.label}: значение не может быть ниже ${field.min}.`;
       continue;
     }
 
     if (field.max !== undefined && parsedValue > field.max) {
-      errors[field.key] = `${field.label}: значение не может быть выше ${field.max}.`;
+      errors[field.key as string] = `${field.label}: значение не может быть выше ${field.max}.`;
       continue;
     }
 
-    parsed[field.key] = parsedValue;
+    parsed[field.key as string] = parsedValue;
   }
 
   const saveParams = body?.saveParams === true || body?.saveParams === 'true';
@@ -134,7 +134,21 @@ const validate3DBody = (body: any) => {
   } as const;
 };
 
-const estimateRecommendedSize = ({ height, weight, chest, waist, hips, fallbackSize }: { height: number; weight: number; chest: number; waist: number; hips: number; fallbackSize?: string }) => {
+const estimateRecommendedSize = ({
+  height,
+  weight,
+  chest,
+  waist,
+  hips,
+  fallbackSize,
+}: {
+  height: number;
+  weight: number;
+  chest: number;
+  waist: number;
+  hips: number;
+  fallbackSize?: string;
+}) => {
   const baseScore = weight * 0.4 + height * 0.2 + chest * 0.2 + waist * 0.1 + hips * 0.1;
   const normalized = Math.min(Math.max((baseScore - 200) / 140, 0), 1);
   const sizeIndex = Math.round(normalized * (AVAILABLE_SIZES.length - 1));
@@ -316,16 +330,17 @@ server.get('/api/product/parse', async (request, reply) => {
     return;
   }
 
-  const allowedDomains = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'];
+  const allowedDomains = ALLOWED_MARKETPLACE_DOMAINS;
   const isHttps = parsedUrl.protocol === 'https:';
   const isAllowedDomain = allowedDomains.some(
-    (domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`)
+    (domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`),
   );
 
   if (!isHttps || !isAllowedDomain) {
+    const allowedList = ALLOWED_MARKETPLACE_DOMAINS.join(', ');
     reply
       .code(400)
-      .send({ error: 'Неподдерживаемый источник товара. Используйте HTTPS-ссылки wildberries.ru, ozon.ru или lamoda.ru.' });
+      .send({ error: `Неподдерживаемый источник товара. Используйте HTTPS-ссылки ${allowedList}.` });
     return;
   }
 
@@ -392,7 +407,11 @@ server.post('/api/tryon/2d', async (request, reply) => {
 
     const suggestedSizeRaw = file.fields?.suggestedSize?.value;
     const suggestedSize = normalizeSize(
-      typeof suggestedSizeRaw === 'string' ? suggestedSizeRaw : Array.isArray(suggestedSizeRaw) ? suggestedSizeRaw[0] : undefined
+      typeof suggestedSizeRaw === 'string'
+        ? suggestedSizeRaw
+        : Array.isArray(suggestedSizeRaw)
+        ? suggestedSizeRaw[0]
+        : undefined,
     );
 
     const imageBuffer = await file.toBuffer();

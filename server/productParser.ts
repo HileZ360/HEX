@@ -1,6 +1,8 @@
 import { load } from 'cheerio';
 import { URL } from 'node:url';
 
+export const ALLOWED_MARKETPLACE_DOMAINS = ['wildberries.ru', 'ozon.ru', 'lamoda.ru'] as const;
+
 export type ParsedProduct = {
   title: string;
   article?: string | null;
@@ -216,8 +218,57 @@ class ProductFetchError extends Error {
   }
 }
 
+const isAllowedMarketplace = (hostname: string) =>
+  ALLOWED_MARKETPLACE_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+
+const fetchWithRedirects = async ({
+  url,
+  signal,
+  maxRedirects = 3,
+}: {
+  url: URL;
+  signal: AbortSignal;
+  maxRedirects?: number;
+}) => {
+  let currentUrl = url;
+
+  for (let attempt = 0; attempt <= maxRedirects; attempt++) {
+    const response = await fetch(currentUrl, {
+      headers: { 'user-agent': USER_AGENT },
+      signal,
+      redirect: 'manual',
+    });
+
+    const isRedirect = response.status >= 300 && response.status < 400 && response.headers.has('location');
+    if (isRedirect) {
+      const location = response.headers.get('location');
+      const nextUrl = location ? new URL(location, currentUrl) : null;
+
+      if (!nextUrl || nextUrl.protocol !== 'https:' || !isAllowedMarketplace(nextUrl.hostname)) {
+        throw new ProductFetchError('Редирект на неподдерживаемый домен.', 400);
+      }
+
+      currentUrl = nextUrl;
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new ProductFetchError(`Не удалось загрузить страницу товара: ${response.status}`, 502);
+    }
+
+    const html = await response.text();
+    return { html, finalUrl: currentUrl } as const;
+  }
+
+  throw new ProductFetchError('Слишком много редиректов при загрузке товара.', 502);
+};
+
 export async function parseProductFromUrl(inputUrl: string): Promise<ParsedProduct> {
   const targetUrl = new URL(inputUrl);
+
+  if (targetUrl.protocol !== 'https:' || !isAllowedMarketplace(targetUrl.hostname)) {
+    throw new ProductFetchError('Неподдерживаемый источник товара. Используйте HTTPS-ссылки wildberries.ru, ozon.ru или lamoda.ru.', 400);
+  }
 
   if (targetUrl.hostname.includes('wildberries')) {
     const wbProduct = await parseWildberriesProduct(targetUrl);
@@ -229,18 +280,8 @@ export async function parseProductFromUrl(inputUrl: string): Promise<ParsedProdu
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(targetUrl, {
-      headers: { 'user-agent': USER_AGENT },
-      signal: controller.signal,
-      redirect: 'error',
-    });
-
-    if (!response.ok) {
-      throw new ProductFetchError(`Не удалось загрузить страницу товара: ${response.status}`, 502);
-    }
-
-    const html = await response.text();
-    return parseHtmlProduct(html, targetUrl);
+    const { html, finalUrl } = await fetchWithRedirects({ url: targetUrl, signal: controller.signal });
+    return parseHtmlProduct(html, finalUrl);
   } catch (error: any) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new ProductFetchError('Превышено время ожидания загрузки товара', 504);
