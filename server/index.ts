@@ -3,11 +3,13 @@ import multipart from '@fastify/multipart';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
-import sharp from 'sharp';
 import { ALLOWED_MARKETPLACE_DOMAINS, parseProductFromUrl } from './productParser';
 
 const AVAILABLE_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'];
-const TRY_ON_TIMEOUT_MS = 20000;
+const TRY_ON_TIMEOUT_MS = Number(process.env.TRY_ON_TIMEOUT_MS ?? 20000);
+const TRY_ON_API_URL = process.env.TRY_ON_API_URL;
+const TRY_ON_API_TOKEN = process.env.TRY_ON_API_TOKEN;
+const TRY_ON_PROVIDER_TIMEOUT_MS = Number(process.env.TRY_ON_PROVIDER_TIMEOUT_MS ?? 12000);
 
 const server = Fastify({ logger: true });
 const PREVIEW_DIR = path.join(process.cwd(), 'tmp', 'tryon-previews');
@@ -191,6 +193,7 @@ async function ensurePreviewDir() {
         server.log.error({ err: error }, 'Failed to run scheduled preview cleanup');
       });
     }, PREVIEW_CLEANUP_INTERVAL_MS);
+    cleanupTimer.unref?.();
   }
   return previewDirReady;
 }
@@ -199,6 +202,13 @@ class PreviewStorageError extends Error {
   constructor(public statusCode: number, message: string) {
     super(message);
     this.name = 'PreviewStorageError';
+  }
+}
+
+class TryOnProviderError extends Error {
+  constructor(public statusCode: number, message: string) {
+    super(message);
+    this.name = 'TryOnProviderError';
   }
 }
 
@@ -320,6 +330,26 @@ const waitWithSignal = (ms: number, signal: AbortSignal) =>
 
     signal.addEventListener('abort', onAbort);
   });
+
+const buildBoundedSignal = (signal: AbortSignal, timeoutMs: number) => {
+  if (timeoutMs <= 0) return signal;
+
+  if (typeof AbortSignal.any === 'function' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const onAbort = () => {
+    clearTimeout(timeoutId);
+    signal.removeEventListener('abort', onAbort);
+    controller.abort();
+  };
+
+  signal.addEventListener('abort', onAbort);
+  return controller.signal;
+};
 
 type FitMetric = {
   label: string;
@@ -514,16 +544,6 @@ const run3DTryOn = async ({
   };
 };
 
-const resizePreview = async (imageBuffer: Buffer) => {
-  const { data, info } = await sharp(imageBuffer)
-    .rotate()
-    .resize({ width: 960, height: 1280, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 82, mozjpeg: true })
-    .toBuffer({ resolveWithObject: true });
-
-  return { buffer: data, info } as const;
-};
-
 const persistPreview = async ({ buffer, signal }: { buffer: Buffer; signal: AbortSignal }) => {
   throwIfAborted(signal);
   await ensurePreviewDir();
@@ -552,6 +572,41 @@ const buildPreviewUrl = (filename: string) => {
   return `${PREVIEW_ROUTE_PREFIX}/${previewId}?${search.toString()}`;
 };
 
+const decodeBase64Buffer = (value: unknown, field: string) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new TryOnProviderError(502, `Сервис примерки не прислал поле ${field}.`);
+  }
+
+  const base64 = value.includes('base64,') ? value.slice(value.indexOf('base64,') + 7) : value;
+
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.byteLength) {
+      throw new Error('Empty buffer');
+    }
+    return buffer;
+  } catch {
+    throw new TryOnProviderError(502, `Некорректные данные ${field} от сервиса примерки.`);
+  }
+};
+
+const normalizeMasks = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+
+const normalizeConfidence = (value: unknown, fallback: number) => {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+      ? Number(value)
+      : undefined;
+
+  if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, 0), 1);
+};
+
 const run2DTryOn = async ({
   imageBuffer,
   suggestedSize,
@@ -562,16 +617,75 @@ const run2DTryOn = async ({
   signal: AbortSignal;
 }) => {
   throwIfAborted(signal);
-  await waitWithSignal(350, signal); // upload
-  await waitWithSignal(550, signal); // segmentation
-  await waitWithSignal(700, signal); // rendering
 
-  const recommendedSize = normalizeSize(suggestedSize) ?? 'M';
-  const sizeConfidenceBoost = suggestedSize ? 0.03 : 0;
-  const bufferImpact = Math.min(imageBuffer.length / (8 * 1024 * 1024), 1);
-  const confidence = Number((0.82 + bufferImpact * 0.12 + sizeConfidenceBoost).toFixed(2));
+  if (!TRY_ON_API_URL) {
+    throw new TryOnProviderError(500, 'Сервис 2D-примерки не настроен. Обратитесь к администратору.');
+  }
 
-  const { buffer: previewBuffer } = await resizePreview(imageBuffer);
+  const uploadForm = new FormData();
+  const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
+  uploadForm.append('image', blob, 'tryon-source.jpg');
+
+  if (suggestedSize) {
+    uploadForm.append('suggestedSize', suggestedSize);
+  }
+
+  const fetchSignal = buildBoundedSignal(signal, TRY_ON_PROVIDER_TIMEOUT_MS);
+
+  let response: Response;
+
+  try {
+    response = await fetch(TRY_ON_API_URL, {
+      method: 'POST',
+      headers: TRY_ON_API_TOKEN ? { Authorization: `Bearer ${TRY_ON_API_TOKEN}` } : undefined,
+      body: uploadForm,
+      signal: fetchSignal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw abortError('Processing aborted');
+    }
+
+    throw new TryOnProviderError(502, 'Сервис примерки недоступен. Попробуйте позже.');
+  }
+
+  if (!response.ok) {
+    let errorMessage = 'Сервис примерки вернул ошибку.';
+
+    try {
+      const payload = await response.json();
+      if (typeof payload?.message === 'string') errorMessage = payload.message;
+      else if (typeof payload?.error === 'string') errorMessage = payload.error;
+    } catch {
+      const text = await response.text().catch(() => '');
+      if (text) errorMessage = text;
+    }
+
+    const statusCode = response.status >= 500 ? 502 : response.status;
+    throw new TryOnProviderError(statusCode || 502, errorMessage);
+  }
+
+  let payload: any;
+
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TryOnProviderError(502, 'Некорректный ответ сервиса примерки.');
+  }
+
+  const previewBuffer = decodeBase64Buffer(
+    payload?.preview ?? payload?.previewImage ?? payload?.previewBase64,
+    'preview',
+  );
+
+  const recommendedSize = normalizeSize(payload?.recommendedSize ?? suggestedSize) ?? 'M';
+  const confidence = normalizeConfidence(payload?.confidence, 0.82);
+  const masks = normalizeMasks(payload?.masks);
+  const recommendation =
+    typeof payload?.recommendation === 'string' && payload.recommendation.trim()
+      ? payload.recommendation.trim()
+      : `Рекомендуем размер ${recommendedSize}.`;
+
   const persistedPreview = await persistPreview({ buffer: previewBuffer, signal });
   const previewUrl = buildPreviewUrl(persistedPreview.filename);
 
@@ -579,8 +693,9 @@ const run2DTryOn = async ({
     previewUrl,
     imageUrl: previewUrl,
     recommendedSize,
-    confidence: Math.min(confidence, 0.97),
-    recommendation: `Рекомендуем размер ${recommendedSize}: примерка учла пропорции силуэта и плотность ткани.`,
+    confidence,
+    masks,
+    recommendation,
   } as const;
 };
 
@@ -775,6 +890,11 @@ server.post('/api/tryon/2d', async (request, reply) => {
 
     if (error instanceof PreviewStorageError) {
       reply.code(error.statusCode).send({ message: error.message });
+      return;
+    }
+
+    if (error instanceof TryOnProviderError) {
+      reply.code(error.statusCode || 502).send({ message: error.message });
       return;
     }
 

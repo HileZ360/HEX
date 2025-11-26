@@ -4,8 +4,24 @@ import FormData from 'form-data';
 import sharp from 'sharp';
 
 process.env.NODE_ENV = 'test';
+process.env.TRY_ON_API_URL = 'https://tryon.local/api';
+process.env.TRY_ON_PROVIDER_TIMEOUT_MS = '100';
 
 const serverPromise = import('../server/index').then((mod) => mod.default);
+
+const buildTryOnForm = async () => {
+  const sourceBuffer = await sharp({
+    create: { width: 1400, height: 1400, channels: 3, background: { r: 12, g: 140, b: 240 } },
+  })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+
+  const form = new FormData();
+  form.append('image', sourceBuffer, { filename: 'avatar.jpg', contentType: 'image/jpeg' });
+  form.append('suggestedSize', 'L');
+
+  return { form, sourceBuffer } as const;
+};
 
 const buildResponse = (url: string) =>
   serverPromise.then((server) =>
@@ -119,43 +135,128 @@ test('extracts available sizes from structured product data', async () => {
 });
 
 test('returns compressed preview link for 2d try-on without base64 payload', async () => {
-  const sourceBuffer = await sharp({
-    create: { width: 1400, height: 1400, channels: 3, background: { r: 12, g: 140, b: 240 } },
+  const { form } = await buildTryOnForm();
+  const providerPreview = await sharp({
+    create: { width: 320, height: 480, channels: 3, background: { r: 30, g: 40, b: 90 } },
   })
-    .jpeg({ quality: 95 })
+    .jpeg({ quality: 80 })
     .toBuffer();
 
-  const form = new FormData();
-  form.append('image', sourceBuffer, { filename: 'avatar.jpg', contentType: 'image/jpeg' });
-  form.append('suggestedSize', 'L');
+  const originalFetch = global.fetch;
 
-  const server = await serverPromise;
-  const response = await server.inject({
-    method: 'POST',
-    url: '/api/tryon/2d',
-    payload: form.getBuffer(),
-    headers: form.getHeaders(),
-  });
+  try {
+    global.fetch = async (_input: any, init: any) => {
+      const body = init?.body as FormData;
+      const uploadedImage = body?.get('image') as File;
+      assert.ok(uploadedImage, 'image should be sent to provider');
+      const uploadedBuffer = Buffer.from(await uploadedImage.arrayBuffer());
+      assert.ok(uploadedBuffer.byteLength > 0, 'provider receives non-empty upload');
 
-  assert.equal(response.statusCode, 200);
-  assert.ok(response.payload.length < 2000, 'payload should stay compact and avoid base64 previews');
+      return new Response(
+        JSON.stringify({
+          preview: `data:image/jpeg;base64,${providerPreview.toString('base64')}`,
+          masks: ['mask-1'],
+          recommendedSize: 'L',
+          recommendation: 'Сервис подтвердил размер L',
+          confidence: 0.94,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
 
-  const data = response.json();
-  assert.match(data.previewUrl, /^\/api\/tryon\/2d\/preview\//);
-  assert.ok(!String(response.payload).includes('base64'));
+    const server = await serverPromise;
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/2d',
+      payload: form.getBuffer(),
+      headers: form.getHeaders(),
+    });
 
-  const previewResponse = await server.inject({
-    method: 'GET',
-    url: data.previewUrl,
-  });
+    assert.equal(response.statusCode, 200);
+    assert.ok(response.payload.length < 2000, 'payload should stay compact and avoid base64 previews');
 
-  assert.equal(previewResponse.statusCode, 200);
-  const previewBuffer = Buffer.isBuffer(previewResponse.rawPayload)
-    ? (previewResponse.rawPayload as Buffer)
-    : Buffer.from(previewResponse.payload as string, 'binary');
+    const data = response.json();
+    assert.match(data.previewUrl, /^\/api\/tryon\/2d\/preview\//);
+    assert.equal(data.recommendedSize, 'L');
+    assert.deepEqual(data.masks, ['mask-1']);
+    assert.equal(data.recommendation, 'Сервис подтвердил размер L');
+    assert.ok(!String(response.payload).includes('base64'));
 
-  assert.ok(
-    previewBuffer.byteLength < sourceBuffer.byteLength,
-    'resized preview should weigh less than source',
-  );
+    const previewResponse = await server.inject({
+      method: 'GET',
+      url: data.previewUrl,
+    });
+
+    assert.equal(previewResponse.statusCode, 200);
+    const previewBuffer = Buffer.isBuffer(previewResponse.rawPayload)
+      ? (previewResponse.rawPayload as Buffer)
+      : Buffer.from(previewResponse.payload as string, 'binary');
+
+    assert.equal(
+      previewBuffer.toString('base64'),
+      providerPreview.toString('base64'),
+      'persisted preview should match provider buffer',
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('returns 504 when try-on provider exceeds timeout', async () => {
+  const { form } = await buildTryOnForm();
+  const originalFetch = global.fetch;
+
+  try {
+    global.fetch = (_input: any, init: any) =>
+      new Promise((_, reject) => {
+        const signal: AbortSignal | undefined = init?.signal;
+        if (signal) {
+          const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            reject(new DOMException('Aborted', 'AbortError'));
+          };
+
+          signal.addEventListener('abort', onAbort);
+        }
+      });
+
+    const server = await serverPromise;
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/2d',
+      payload: form.getBuffer(),
+      headers: form.getHeaders(),
+    });
+
+    assert.equal(response.statusCode, 504);
+    assert.match(response.json().message, /Превышено время ожидания/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('maps provider errors to 502 response', async () => {
+  const { form } = await buildTryOnForm();
+  const originalFetch = global.fetch;
+
+  try {
+    global.fetch = async () =>
+      new Response(JSON.stringify({ error: 'Unsupported image' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    const server = await serverPromise;
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/2d',
+      payload: form.getBuffer(),
+      headers: form.getHeaders(),
+    });
+
+    assert.equal(response.statusCode, 502);
+    assert.match(response.json().message, /Unsupported image|Сервис примерки/);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
