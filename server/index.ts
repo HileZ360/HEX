@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { FastifyRequest } from 'fastify';
 import multipart from '@fastify/multipart';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -20,6 +20,27 @@ const PREVIEW_CLEANUP_INTERVAL_MS = Number(process.env.PREVIEW_CLEANUP_INTERVAL_
 const PREVIEW_TOKEN_TTL_MS = Number(process.env.PREVIEW_TOKEN_TTL_MS ?? 15 * 60 * 1000);
 const PREVIEW_RATE_LIMIT_WINDOW_MS = Number(process.env.PREVIEW_RATE_LIMIT_WINDOW_MS ?? 60 * 1000);
 const PREVIEW_RATE_LIMIT_MAX = Number(process.env.PREVIEW_RATE_LIMIT_MAX ?? 30);
+const PRODUCT_RATE_LIMIT_WINDOW_MS = Number(process.env.PRODUCT_RATE_LIMIT_WINDOW_MS ?? 60 * 1000);
+const PRODUCT_RATE_LIMIT_MAX = Number(process.env.PRODUCT_RATE_LIMIT_MAX ?? 45);
+const PRODUCT_REPEAT_WINDOW_MS = Number(process.env.PRODUCT_REPEAT_WINDOW_MS ?? 2 * 60 * 1000);
+const PRODUCT_REPEAT_LIMIT = Number(process.env.PRODUCT_REPEAT_LIMIT ?? 6);
+const PRODUCT_URL_MAX_LENGTH = Number(process.env.PRODUCT_URL_MAX_LENGTH ?? 2048);
+const PRODUCT_PARSE_MAX_CONCURRENCY = Number(process.env.PRODUCT_PARSE_MAX_CONCURRENCY ?? 4);
+const PRODUCT_PARSE_QUEUE_LIMIT = Number(process.env.PRODUCT_PARSE_QUEUE_LIMIT ?? 32);
+
+const getClientIdentifier = (request: FastifyRequest) => {
+  const headerToken = request.headers['x-api-token'] ?? request.headers.authorization;
+  if (Array.isArray(headerToken)) {
+    const token = headerToken.find(Boolean);
+    if (token?.trim()) return token.trim();
+  }
+
+  if (typeof headerToken === 'string' && headerToken.trim()) {
+    return headerToken.trim();
+  }
+
+  return request.ip;
+};
 
 server.register(multipart, {
   limits: {
@@ -33,6 +54,10 @@ let previewDirReady: Promise<void> | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
 let previewTokenSecret: Buffer | null = null;
 const previewRateLimits = new Map<string, { count: number; resetAt: number }>();
+const productRateLimits = new Map<string, { count: number; resetAt: number }>();
+const productRepeatLimits = new Map<string, { count: number; resetAt: number }>();
+const productParseQueue: Array<() => void> = [];
+let activeProductParses = 0;
 
 const getPreviewTokenSecret = () => {
   if (process.env.PREVIEW_TOKEN_SECRET) {
@@ -96,6 +121,65 @@ const applyPreviewRateLimit = (ip: string) => {
   previewRateLimits.set(ip, { ...current, count: current.count + 1 });
   return { allowed: true as const };
 };
+
+const applyProductRateLimit = (key: string) => {
+  const now = Date.now();
+  const current = productRateLimits.get(key);
+
+  if (!current || current.resetAt <= now) {
+    productRateLimits.set(key, { count: 1, resetAt: now + PRODUCT_RATE_LIMIT_WINDOW_MS });
+    return { allowed: true as const };
+  }
+
+  if (current.count >= PRODUCT_RATE_LIMIT_MAX) {
+    return { allowed: false as const, retryAt: current.resetAt };
+  }
+
+  productRateLimits.set(key, { ...current, count: current.count + 1 });
+  return { allowed: true as const };
+};
+
+const applyProductRepeatLimit = (key: string, url: string) => {
+  const now = Date.now();
+  const repeatKey = `${key}:${url}`;
+  const current = productRepeatLimits.get(repeatKey);
+
+  if (!current || current.resetAt <= now) {
+    productRepeatLimits.set(repeatKey, { count: 1, resetAt: now + PRODUCT_REPEAT_WINDOW_MS });
+    return { allowed: true as const };
+  }
+
+  if (current.count >= PRODUCT_REPEAT_LIMIT) {
+    return { allowed: false as const, retryAt: current.resetAt };
+  }
+
+  productRepeatLimits.set(repeatKey, { ...current, count: current.count + 1 });
+  return { allowed: true as const };
+};
+
+const acquireProductParseSlot = () =>
+  new Promise<() => void>((resolve, reject) => {
+    const tryAcquire = () => {
+      if (activeProductParses < PRODUCT_PARSE_MAX_CONCURRENCY) {
+        activeProductParses += 1;
+        resolve(() => {
+          activeProductParses -= 1;
+          const next = productParseQueue.shift();
+          if (next) next();
+        });
+        return;
+      }
+
+      if (productParseQueue.length >= PRODUCT_PARSE_QUEUE_LIMIT) {
+        reject(new Error('Product parse queue limit exceeded'));
+        return;
+      }
+
+      productParseQueue.push(tryAcquire);
+    };
+
+    tryAcquire();
+  });
 
 async function ensurePreviewDir() {
   if (!previewDirReady) {
@@ -502,9 +586,36 @@ const run2DTryOn = async ({
 
 server.get('/api/product/parse', async (request, reply) => {
   const url = (request.query as { url?: string }).url;
+  const clientKey = getClientIdentifier(request);
 
   if (!url) {
     reply.code(400).send({ error: 'Missing url query param' });
+    return;
+  }
+
+  if (url.length > PRODUCT_URL_MAX_LENGTH) {
+    request.log.warn({ urlLength: url.length, clientKey }, 'Product parse blocked: url too long');
+    reply.code(429).send({ error: 'Ссылка слишком длинная. Попробуйте другой адрес товара.' });
+    return;
+  }
+
+  const productRateLimit = applyProductRateLimit(clientKey);
+  if (!productRateLimit.allowed) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((productRateLimit.retryAt - Date.now()) / 1000));
+    reply.header('Retry-After', String(retryAfterSeconds));
+    request.log.warn({ clientKey, ip: request.ip }, 'Product parse rate limit exceeded');
+    reply.code(429).send({ error: 'Слишком много запросов. Попробуйте позже.' });
+    return;
+  }
+
+  const productRepeatLimit = applyProductRepeatLimit(clientKey, url);
+  if (!productRepeatLimit.allowed) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((productRepeatLimit.retryAt - Date.now()) / 1000));
+    reply.header('Retry-After', String(retryAfterSeconds));
+    request.log.warn({ clientKey, url }, 'Product parse blocked due to repeated URL');
+    reply
+      .code(429)
+      .send({ error: 'Слишком частые запросы одного и того же товара. Попробуйте позже.' });
     return;
   }
 
@@ -532,22 +643,38 @@ server.get('/api/product/parse', async (request, reply) => {
   }
 
   try {
-    const parsedProduct = await parseProductFromUrl(url, request.log);
+    let releaseSlot: (() => void) | undefined;
 
-    reply.send({
-      title: parsedProduct.title,
-      article: parsedProduct.article ?? null,
-      price: parsedProduct.price ?? null,
-      originalPrice: parsedProduct.originalPrice ?? null,
-      discount: parsedProduct.discount ?? null,
-      images: parsedProduct.images ?? [],
-      similar: parsedProduct.similar ?? [],
-      sizes: parsedProduct.sizes ?? [],
-      recommendedSize: parsedProduct.recommendedSize ?? null,
-      recommendationConfidence: parsedProduct.recommendationConfidence ?? null,
-      fitNotes: parsedProduct.fitNotes ?? [],
-      marketplace: parsedProduct.marketplace,
-    });
+    try {
+      releaseSlot = await acquireProductParseSlot();
+    } catch (error) {
+      request.log.warn({ clientKey, err: error }, 'Product parse queue is full');
+      reply
+        .code(429)
+        .send({ error: 'Слишком много одновременных запросов на загрузку товара. Попробуйте позже.' });
+      return;
+    }
+
+    try {
+      const parsedProduct = await parseProductFromUrl(url, request.log);
+
+      reply.send({
+        title: parsedProduct.title,
+        article: parsedProduct.article ?? null,
+        price: parsedProduct.price ?? null,
+        originalPrice: parsedProduct.originalPrice ?? null,
+        discount: parsedProduct.discount ?? null,
+        images: parsedProduct.images ?? [],
+        similar: parsedProduct.similar ?? [],
+        sizes: parsedProduct.sizes ?? [],
+        recommendedSize: parsedProduct.recommendedSize ?? null,
+        recommendationConfidence: parsedProduct.recommendationConfidence ?? null,
+        fitNotes: parsedProduct.fitNotes ?? [],
+        marketplace: parsedProduct.marketplace,
+      });
+    } finally {
+      releaseSlot?.();
+    }
   } catch (error: any) {
     const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     const message =
