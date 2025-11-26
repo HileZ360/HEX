@@ -10,7 +10,10 @@ process.env.TRY_ON_PROVIDER_TIMEOUT_MS = '100';
 
 const serverPromise = import('../server/index').then((mod) => mod.default);
 
-const buildTryOnForm = async () => {
+const buildTryOnForm = async ({
+  garmentImageUrl,
+  productId,
+}: { garmentImageUrl?: string | null; productId?: string } = {}) => {
   const sourceBuffer = await sharp({
     create: { width: 1400, height: 1400, channels: 3, background: { r: 12, g: 140, b: 240 } },
   })
@@ -20,6 +23,13 @@ const buildTryOnForm = async () => {
   const form = new FormData();
   form.append('image', sourceBuffer, { filename: 'avatar.jpg', contentType: 'image/jpeg' });
   form.append('suggestedSize', 'L');
+  const finalGarmentImageUrl = garmentImageUrl === undefined ? 'https://cdn.example.com/garment.jpg' : garmentImageUrl;
+  if (typeof finalGarmentImageUrl === 'string') {
+    form.append('garmentImageUrl', finalGarmentImageUrl);
+  }
+  if (productId) {
+    form.append('productId', productId);
+  }
 
   return { form, sourceBuffer } as const;
 };
@@ -147,15 +157,14 @@ test('returns compressed preview link for 2d try-on without base64 payload', asy
 
   try {
     global.fetch = async (_input: any, init: any) => {
-      const body = init?.body as FormData;
-      const uploadedImage = body?.get('image') as File;
-      assert.ok(uploadedImage, 'image should be sent to provider');
-      const uploadedBuffer = Buffer.from(await uploadedImage.arrayBuffer());
+      const body = JSON.parse(String(init?.body));
+      assert.match(body.cloth_image_url, /garment\.jpg$/, 'garment image should be forwarded');
+      const uploadedBuffer = Buffer.from(String(body.input_image).replace(/^data:[^,]+,/, ''), 'base64');
       assert.ok(uploadedBuffer.byteLength > 0, 'provider receives non-empty upload');
 
       return new Response(
         JSON.stringify({
-          preview: `data:image/jpeg;base64,${providerPreview.toString('base64')}`,
+          render: `data:image/jpeg;base64,${providerPreview.toString('base64')}`,
           masks: ['mask-1'],
           recommendedSize: 'L',
           recommendation: 'Сервис подтвердил размер L',
@@ -260,6 +269,103 @@ test('maps provider errors to 502 response', async () => {
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test('uses cached product image when only productId is provided', async () => {
+  const originalFetch = global.fetch;
+  const productImage = 'https://cdn.example.com/from-parse.jpg';
+  const providerPreview = Buffer.from('provider-render');
+  let providerCalls = 0;
+
+  try {
+    global.fetch = async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : String(input);
+
+      if (url.includes('card.wb.ru')) {
+        return new Response(
+          JSON.stringify({ data: { products: [{ id: 123, salePriceU: 10000, priceU: 12000, pics: 1 }] } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('wildberries.ru')) {
+        const html = `
+          <html>
+            <head>
+              <script type="application/ld+json">
+                ${JSON.stringify({ '@type': 'Product', name: 'Test item', image: productImage })}
+              </script>
+            </head>
+          </html>`;
+        return new Response(html, { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+
+      if (url.includes('tryon.local')) {
+        providerCalls += 1;
+        return new Response(
+          JSON.stringify({ render: `data:image/jpeg;base64,${providerPreview.toString('base64')}` }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+
+      return Response.error();
+    };
+
+    const server = await serverPromise;
+    const parseResponse = await server.inject({
+      method: 'GET',
+      url: '/api/product/parse',
+      query: { url: 'https://wildberries.ru/catalog/123/detail.aspx' },
+    });
+
+    const parsed = parseResponse.json();
+    const { productId } = parsed;
+    assert.ok(productId, 'parse response should include productId');
+
+    const { form } = await buildTryOnForm({ garmentImageUrl: null, productId });
+    const tryOnResponse = await server.inject({
+      method: 'POST',
+      url: '/api/tryon/2d',
+      payload: form.getBuffer(),
+      headers: form.getHeaders(),
+    });
+
+    assert.equal(tryOnResponse.statusCode, 200);
+    assert.equal(providerCalls, 1);
+    assert.ok(/preview/.test(tryOnResponse.json().previewUrl));
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('rejects try-on without garment reference', async () => {
+  const { form } = await buildTryOnForm({ garmentImageUrl: null });
+  const server = await serverPromise;
+
+  const response = await server.inject({
+    method: 'POST',
+    url: '/api/tryon/2d',
+    payload: form.getBuffer(),
+    headers: form.getHeaders(),
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.json().message, /ссылк|одежд/i);
+});
+
+test('rejects try-on with invalid garment url', async () => {
+  const { form } = await buildTryOnForm({ garmentImageUrl: 'ftp://invalid/image.png' });
+  const server = await serverPromise;
+
+  const response = await server.inject({
+    method: 'POST',
+    url: '/api/tryon/2d',
+    payload: form.getBuffer(),
+    headers: form.getHeaders(),
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.match(response.json().message, /HTTPS|корректн/i);
 });
 
 test('sends body params to 3d provider and returns persisted render', async () => {
