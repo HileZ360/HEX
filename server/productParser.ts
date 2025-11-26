@@ -1,5 +1,10 @@
 import { parseHtmlProduct } from './parsers/htmlProduct.js';
-import { parseWildberriesProduct, fetchWithRedirects, isAllowedMarketplace, ProductFetchError } from './services/marketplace.js';
+import {
+  fetchMarketplaceProduct,
+  fetchWithRedirects,
+  isAllowedMarketplace,
+  ProductFetchError,
+} from './services/marketplace.js';
 import type { ParsedProduct } from './types/product.js';
 import type { ParseLogger } from './logger.js';
 
@@ -17,14 +22,15 @@ export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger
     );
   }
 
+  const marketplaceProduct = await fetchMarketplaceProduct(targetUrl, logger);
+  if (marketplaceProduct) {
+    return marketplaceProduct;
+  }
+
   if (targetUrl.hostname.includes('wildberries')) {
-    const wbProduct = await parseWildberriesProduct(targetUrl, logger);
-    if (!wbProduct) {
-      logger?.warn?.('Falling back to HTML parser after empty Wildberries API response', {
-        url: targetUrl.href,
-      });
-    }
-    if (wbProduct) return wbProduct;
+    logger?.warn?.('Falling back to HTML parser after empty Wildberries API response', {
+      url: targetUrl.href,
+    });
   }
 
   const controller = new AbortController();
