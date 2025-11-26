@@ -7,11 +7,14 @@ process.env.NODE_ENV = 'test';
 
 const serverPromise = import('../server/index').then((mod) => mod.default);
 
-const buildResponse = (url: string) => serverPromise.then((server) => server.inject({
-  method: 'GET',
-  url: '/api/product/parse',
-  query: { url },
-}));
+const buildResponse = (url: string) =>
+  serverPromise.then((server) =>
+    server.inject({
+      method: 'GET',
+      url: '/api/product/parse',
+      query: { url },
+    }),
+  );
 
 test('rejects unsupported domain', async () => {
   const response = await buildResponse('https://example.com/product/123');
@@ -72,7 +75,8 @@ test('rejects redirects to unsupported marketplace domains', async () => {
   const originalFetch = global.fetch;
 
   try {
-    global.fetch = async () => new Response(null, { status: 302, headers: { location: 'https://example.com/out' } });
+    global.fetch = async () =>
+      new Response(null, { status: 302, headers: { location: 'https://example.com/out' } });
 
     const response = await buildResponse('https://www.lamoda.ru/p/123/');
     assert.equal(response.statusCode, 400);
@@ -118,5 +122,8 @@ test('returns compressed preview link for 2d try-on without base64 payload', asy
     ? (previewResponse.rawPayload as Buffer)
     : Buffer.from(previewResponse.payload as string, 'binary');
 
-  assert.ok(previewBuffer.byteLength < sourceBuffer.byteLength, 'resized preview should weigh less than source');
+  assert.ok(
+    previewBuffer.byteLength < sourceBuffer.byteLength,
+    'resized preview should weigh less than source',
+  );
 });
