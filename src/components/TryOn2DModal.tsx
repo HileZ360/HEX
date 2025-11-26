@@ -98,6 +98,7 @@ export function TryOn2DModal({
   const startTryOn = async (file: File) => {
     setIsSubmitting(true);
     setUploadMessage('Загружаем фото...');
+    setError(null);
     try {
       const formData = new FormData();
       formData.append('image', file);
@@ -113,8 +114,14 @@ export function TryOn2DModal({
       const contentType = response.headers.get('content-type');
       const data = contentType?.includes('application/json') ? await response.json() : null;
 
+      const serverMessage = data?.message || data?.error || data?.statusMessage;
+
       if (!response.ok) {
-        throw new Error(data?.message || 'Не удалось создать примерку. Попробуйте еще раз.');
+        throw new Error(serverMessage || 'Не удалось создать примерку. Попробуйте еще раз.');
+      }
+
+      if (serverMessage) {
+        setUploadMessage(serverMessage);
       }
 
       const finalImage = data?.imageUrl || data?.image || data?.renderedImage;
@@ -122,13 +129,15 @@ export function TryOn2DModal({
         throw new Error('Сервер не вернул результат примерки.');
       }
 
-      setUploadMessage('Обрабатываем изображение...');
+      setUploadMessage(serverMessage || 'Обрабатываем изображение...');
       setResultImage(finalImage);
       setResultRecommendation(data?.recommendation || data?.recommendationText);
       setResultSize(data?.recommendedSize ?? suggestedSize);
       setResultConfidence(data?.confidence ?? suggestedConfidence);
       setStep('result');
     } catch (err) {
+      setStep('upload');
+      setResultImage(null);
       setError(err instanceof Error ? err.message : 'Произошла ошибка при загрузке.');
     } finally {
       setIsSubmitting(false);
