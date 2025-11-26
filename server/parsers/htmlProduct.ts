@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import { computeDiscount, ensureNumber, extractPriceFromOffers } from '../normalizers/pricing.js';
 import { FALLBACK_IMAGES, normalizeImages } from '../normalizers/media.js';
 import { extractSizes } from '../normalizers/sizing.js';
+import { normalizeSimilarItems } from '../normalizers/similar.js';
 import { extractJsonLdProduct } from './jsonld.js';
 import type { ParsedProduct } from '../types/product.js';
 
@@ -35,16 +36,7 @@ export const parseHtmlProduct = (html: string, targetUrl: URL): ParsedProduct =>
   ].filter(Boolean);
 
   const sizes = extractSizes(product);
-  const similarRaw = (product.isSimilarTo ?? []) as any[];
-  const similar = Array.isArray(similarRaw)
-    ? similarRaw
-        .map((item) => ({
-          title: item?.name ?? item?.title,
-          price: ensureNumber(item?.offers?.price ?? item?.price),
-          image: normalizeImages(item?.image)[0],
-        }))
-        .filter((item) => item.title || item.image)
-    : [];
+  const similar = normalizeSimilarItems(product.isSimilarTo);
 
   return {
     title: product.name ?? extractMetaContent($, ['meta[property="og:title"]']) ?? $('title').text() ?? 'Товар',

@@ -44,3 +44,25 @@ test('uses fallback values when json-ld is missing or malformed', () => {
   assert.deepEqual(product.sizes, []);
   assert.ok(product.images.includes('https://example.com/default.jpg'));
 });
+
+test('normalizes similar products by validating fields and removing duplicates', () => {
+  const html = buildHtml({
+    '@type': 'Product',
+    name: 'Structured tee',
+    isSimilarTo: [
+      { name: 'Alpha', image: ['https://example.com/a.jpg', 'https://example.com/b.jpg'], offers: { price: '1200' } },
+      { title: 'Alpha', image: 'https://example.com/a.jpg', price: 'should-be-deduped' },
+      { name: 'Bravo', image: '   ' },
+      { image: 'https://example.com/c.jpg' },
+      'invalid',
+    ],
+  });
+
+  const product = parseHtmlProduct(html, new URL('https://lamoda.ru/p/456/'));
+
+  assert.deepEqual(product.similar, [
+    { title: 'Alpha', price: 1200, image: 'https://example.com/a.jpg' },
+    { title: 'Bravo', price: undefined, image: undefined },
+    { title: undefined, price: undefined, image: 'https://example.com/c.jpg' },
+  ]);
+});
