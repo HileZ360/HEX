@@ -12,6 +12,11 @@ const TRY_ON_TIMEOUT_MS = 20000;
 const server = Fastify({ logger: true });
 const PREVIEW_DIR = path.join(process.cwd(), 'tmp', 'tryon-previews');
 const PREVIEW_ROUTE_PREFIX = '/api/tryon/2d/preview';
+const PREVIEW_MANIFEST = path.join(PREVIEW_DIR, 'manifest.json');
+const PREVIEW_RETENTION_MINUTES = Number(process.env.PREVIEW_RETENTION_MINUTES ?? 45);
+const PREVIEW_MAX_COUNT = Number(process.env.PREVIEW_MAX_COUNT ?? 400);
+const PREVIEW_MAX_TOTAL_BYTES = Number(process.env.PREVIEW_MAX_TOTAL_BYTES ?? 200 * 1024 * 1024);
+const PREVIEW_CLEANUP_INTERVAL_MS = Number(process.env.PREVIEW_CLEANUP_INTERVAL_MS ?? 10 * 60 * 1000);
 
 server.register(multipart, {
   limits: {
@@ -22,12 +27,113 @@ server.register(multipart, {
 });
 
 let previewDirReady: Promise<void> | null = null;
+let cleanupTimer: NodeJS.Timeout | null = null;
 
-const ensurePreviewDir = () => {
+async function ensurePreviewDir() {
   if (!previewDirReady) {
     previewDirReady = fs.mkdir(PREVIEW_DIR, { recursive: true }).then(() => undefined);
   }
+  if (!cleanupTimer) {
+    cleanupTimer = setInterval(() => {
+      cleanupPreviews().catch((error) => {
+        server.log.error({ err: error }, 'Failed to run scheduled preview cleanup');
+      });
+    }, PREVIEW_CLEANUP_INTERVAL_MS);
+  }
   return previewDirReady;
+}
+
+class PreviewStorageError extends Error {
+  constructor(public statusCode: number, message: string) {
+    super(message);
+    this.name = 'PreviewStorageError';
+  }
+}
+
+type PreviewManifestEntry = { filename: string; createdAt: number; size: number };
+
+type PreviewManifest = { items: PreviewManifestEntry[] };
+
+const readPreviewManifest = async (): Promise<PreviewManifest> => {
+  try {
+    const content = await fs.readFile(PREVIEW_MANIFEST, 'utf8');
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed?.items)) {
+      return { items: parsed.items };
+    }
+  } catch {}
+
+  return { items: [] };
+};
+
+const writePreviewManifest = (manifest: PreviewManifest) =>
+  fs.writeFile(PREVIEW_MANIFEST, JSON.stringify(manifest, null, 2));
+
+const deletePreviewFile = async (entry: PreviewManifestEntry) => {
+  const filepath = path.join(PREVIEW_DIR, entry.filename);
+  await fs.rm(filepath, { force: true }).catch(() => undefined);
+};
+
+async function cleanupPreviews() {
+  await ensurePreviewDir();
+  const manifest = await readPreviewManifest();
+  const now = Date.now();
+  const ageLimit = now - PREVIEW_RETENTION_MINUTES * 60 * 1000;
+
+  const remaining: PreviewManifestEntry[] = [];
+
+  for (const entry of manifest.items) {
+    if (entry.createdAt < ageLimit) {
+      await deletePreviewFile(entry);
+      continue;
+    }
+
+    const filepath = path.join(PREVIEW_DIR, entry.filename);
+    try {
+      const stats = await fs.stat(filepath);
+      remaining.push({ ...entry, size: stats.size, createdAt: entry.createdAt });
+    } catch {
+      // File is missing; drop from manifest.
+    }
+  }
+
+  await writePreviewManifest({ items: remaining });
+  return remaining;
+}
+
+const enforcePreviewBudget = async (options: { incomingSize: number }) => {
+  const { incomingSize } = options;
+  if (incomingSize > PREVIEW_MAX_TOTAL_BYTES) {
+    throw new PreviewStorageError(
+      503,
+      'Размер предпросмотра превышает допустимый лимит хранения. Попробуйте другое изображение.',
+    );
+  }
+
+  const manifest = await cleanupPreviews();
+  const sorted = [...manifest].sort((a, b) => a.createdAt - b.createdAt);
+
+  let totalSize = sorted.reduce((acc, item) => acc + item.size, 0);
+  const itemsToKeep: PreviewManifestEntry[] = [];
+
+  for (const entry of sorted) {
+    if (itemsToKeep.length + 1 > PREVIEW_MAX_COUNT || totalSize + incomingSize > PREVIEW_MAX_TOTAL_BYTES) {
+      await deletePreviewFile(entry);
+      totalSize -= entry.size;
+      continue;
+    }
+    itemsToKeep.push(entry);
+  }
+
+  if (itemsToKeep.length >= PREVIEW_MAX_COUNT || totalSize + incomingSize > PREVIEW_MAX_TOTAL_BYTES) {
+    throw new PreviewStorageError(
+      429,
+      'Лимит предпросмотров исчерпан. Повторите попытку позже, когда освободится место.',
+    );
+  }
+
+  await writePreviewManifest({ items: itemsToKeep });
+  return itemsToKeep;
 };
 
 const normalizeSize = (value?: string) => {
@@ -270,11 +376,17 @@ const persistPreview = async ({ buffer, signal }: { buffer: Buffer; signal: Abor
   throwIfAborted(signal);
   await ensurePreviewDir();
 
+  const itemsToKeep = await enforcePreviewBudget({ incomingSize: buffer.length });
+
   const id = randomUUID();
   const filename = `${id}.jpg`;
   const filepath = path.join(PREVIEW_DIR, filename);
+  const createdAt = Date.now();
 
   await fs.writeFile(filepath, buffer);
+  await writePreviewManifest({
+    items: [...itemsToKeep, { filename, createdAt, size: buffer.length }],
+  });
 
   return { id, filepath, filename } as const;
 };
@@ -440,6 +552,11 @@ server.post('/api/tryon/2d', async (request, reply) => {
 
     if (error?.code === 'FST_REQ_FILE_TOO_LARGE' || error?.code === 'FST_PART_FILE_TOO_LARGE') {
       reply.code(413).send({ message: 'Размер файла превышает допустимый лимит 15 МБ.' });
+      return;
+    }
+
+    if (error instanceof PreviewStorageError) {
+      reply.code(error.statusCode).send({ message: error.message });
       return;
     }
 
