@@ -19,6 +19,11 @@ npm install
 - `npm run build` — сборка фронтенда.
 - `npm run preview` — предпросмотр собранной версии.
 
+### Обязательные переменные окружения
+- `TRY_ON_API_URL` — базовый endpoint провайдера 2D/3D примерки.
+- `TRY_ON_API_TOKEN` — токен авторизации провайдера примерки.
+- `TRY_ON_3D_API_URL` — endpoint 3D-примерки (если отличается от `TRY_ON_API_URL`).
+
 ## Технологический стек
 - React 18 + Vite
 - Tailwind CSS

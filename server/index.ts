@@ -38,6 +38,19 @@ const PRODUCT_PARSE_QUEUE_LIMIT = Number(process.env.PRODUCT_PARSE_QUEUE_LIMIT ?
 const PARSED_PRODUCT_TTL_MS = Number(process.env.PARSED_PRODUCT_TTL_MS ?? 20 * 60 * 1000);
 const PARSED_PRODUCT_CACHE_LIMIT = Number(process.env.PARSED_PRODUCT_CACHE_LIMIT ?? 50);
 
+const REQUIRED_TRY_ON_ENV = ['TRY_ON_API_URL', 'TRY_ON_API_TOKEN', 'TRY_ON_3D_API_URL'] as const;
+const missingTryOnEnv = REQUIRED_TRY_ON_ENV.filter((key) => !(process.env[key]?.trim()));
+
+if (missingTryOnEnv.length > 0) {
+  const message = `Missing required env vars for try-on provider: ${missingTryOnEnv.join(', ')}`;
+
+  console.error({ missingTryOnEnv }, message);
+
+  if (process.env.NODE_ENV !== 'test') {
+    process.exit(1);
+  }
+}
+
 const getClientIdentifier = (request: FastifyRequest) => {
   const headerToken = request.headers['x-api-token'] ?? request.headers.authorization;
   if (Array.isArray(headerToken)) {
@@ -1076,6 +1089,11 @@ server.post('/api/tryon/3d', async (request, reply) => {
     }
   } catch (error: any) {
     request.log.error(error);
+
+    if (error instanceof TryOnProviderError) {
+      reply.code(error.statusCode || 502).send({ message: error.message });
+      return;
+    }
 
     if (error?.name === 'AbortError') {
       reply.code(504).send({ message: 'Превышено время ожидания сервиса 3D-примерки. Попробуйте снова.' });
