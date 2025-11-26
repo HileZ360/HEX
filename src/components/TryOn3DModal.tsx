@@ -28,6 +28,7 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
   const [resultSize, setResultSize] = useState<string | undefined>(suggestedSize);
   const [resultConfidence, setResultConfidence] = useState<number | undefined>(suggestedConfidence);
   const [previewImage, setPreviewImage] = useState<string | undefined>();
+  const [fitMetrics, setFitMetrics] = useState<{ label: string; status: string; score: number; detail?: string }[]>([]);
 
   const resetState = () => {
     setStep(1);
@@ -44,6 +45,7 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
     setResultSize(suggestedSize);
     setResultConfidence(suggestedConfidence);
     setPreviewImage(undefined);
+    setFitMetrics([]);
   };
 
   useEffect(() => {
@@ -113,10 +115,21 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
       const nextSize = data?.recommendedSize ?? suggestedSize;
       const nextConfidence = data?.confidence ?? suggestedConfidence;
       const nextPreview = data?.renderedImage ?? data?.imageUrl ?? data?.image;
+      const metrics = Array.isArray(data?.fitMetrics)
+        ? data.fitMetrics
+            .filter((metric: any) => metric?.label && metric?.status)
+            .map((metric: any) => ({
+              label: String(metric.label),
+              status: String(metric.status),
+              score: typeof metric.score === 'number' ? metric.score : 65,
+              detail: metric.detail ? String(metric.detail) : undefined,
+            }))
+        : [];
 
       setResultSize(nextSize);
       setResultConfidence(nextConfidence);
       setPreviewImage(nextPreview);
+      setFitMetrics(metrics);
       setStep(2);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Произошла ошибка. Попробуйте снова.');
@@ -293,20 +306,26 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
             </div>
 
             <div className="space-y-6">
-              {[
-                { label: "По груди", value: 70, status: "Комфортно" },
-                { label: "По талии", value: 50, status: "Свободно" },
-                { label: "По длине", value: 85, status: "Стандартно" }
-              ].map((metric, i) => (
-                <div key={i}>
+              {(fitMetrics.length > 0
+                ? fitMetrics
+                : [
+                    { label: 'По груди', status: 'Комфортно', score: 70 },
+                    { label: 'По талии', status: 'Комфортно', score: 65 },
+                    { label: 'По бёдрам', status: 'Свободно', score: 75 },
+                  ]
+              ).map((metric, i) => (
+                <div key={`${metric.label}-${i}`}>
                   <div className="flex justify-between text-sm mb-2">
-                    <span className="font-medium text-hex-dark">{metric.label}</span>
-                    <span className="text-hex-primary">{metric.status}</span>
+                    <div className="space-y-1">
+                      <span className="font-medium text-hex-dark block">{metric.label}</span>
+                      {metric.detail && <span className="text-xs text-hex-gray">{metric.detail}</span>}
+                    </div>
+                    <span className="text-hex-primary font-medium">{metric.status}</span>
                   </div>
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className="h-full bg-hex-primary/60 rounded-full"
-                      style={{ width: `${metric.value}%` }}
+                      style={{ width: `${Math.min(Math.max(metric.score, 0), 100)}%` }}
                     />
                   </div>
                 </div>
