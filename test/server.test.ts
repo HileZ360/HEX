@@ -86,6 +86,38 @@ test('rejects redirects to unsupported marketplace domains', async () => {
   }
 });
 
+test('extracts available sizes from structured product data', async () => {
+  const originalFetch = global.fetch;
+  const html = `
+    <html>
+      <head>
+        <script type="application/ld+json">
+          ${JSON.stringify({
+            '@type': 'Product',
+            name: 'Sized tee',
+            image: 'https://cdn.example.com/tee.jpg',
+            offers: {
+              price: '1290',
+              size: [{ name: 'S' }, { size: 'M' }, 'L', null],
+            },
+          })}
+        </script>
+      </head>
+    </html>`;
+
+  try {
+    global.fetch = async () => new Response(html, { status: 200, headers: { 'content-type': 'text/html' } });
+
+    const response = await buildResponse('https://www.lamoda.ru/p/567/');
+    assert.equal(response.statusCode, 200);
+
+    const payload = response.json();
+    assert.deepEqual(payload.sizes, ['S', 'M', 'L']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('returns compressed preview link for 2d try-on without base64 payload', async () => {
   const sourceBuffer = await sharp({
     create: { width: 1400, height: 1400, channels: 3, background: { r: 12, g: 140, b: 240 } },
