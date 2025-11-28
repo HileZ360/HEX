@@ -11,7 +11,7 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-hex-bg flex flex-col">
       <header className="sticky top-0 z-40 w-full bg-hex-bg/80 backdrop-blur-md border-b border-gray-100">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="container mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="hover:opacity-90 transition-opacity">
             <Logo />
           </Link>
@@ -40,12 +40,12 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </header>
 
-      <main className="flex-grow">
+      <main className="flex-grow pt-4 lg:pt-6">
         {children}
       </main>
 
       <footer className="bg-white border-t border-gray-100 py-8 mt-auto">
-        <div className="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="container mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="text-sm text-gray-400">
             © 2025 HEX Virtual Try-On. All rights reserved.
           </div>
