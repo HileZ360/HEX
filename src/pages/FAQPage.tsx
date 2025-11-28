@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 import { Layout } from '../components/Layout';
@@ -41,18 +41,66 @@ const faqs: FAQItem[] = [
   },
 ];
 
-export default function FAQPage() {
-  const [openIndex, setOpenIndex] = useState<number | null>(0);
+function FAQCard({ item, index }: { item: FAQItem; index: number }) {
+  const [isOpen, setIsOpen] = useState(index === 0);
+  const panelId = useId();
 
-  const toggleIndex = (index: number) => {
-    setOpenIndex((prev) => (prev === index ? null : index));
-  };
+  return (
+    <motion.div
+      key={item.question}
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ delay: index * 0.05 }}
+      className="group bg-gradient-to-br from-white via-white to-hex-bg border border-white/70 rounded-[1.75rem] shadow-card hover:shadow-2xl transition-all duration-500 overflow-hidden relative"
+    >
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-hex-primary via-violet-400 to-hex-secondary opacity-80"></div>
+      <button
+        type="button"
+        className="w-full text-left px-8 py-6 lg:px-10 lg:py-7 flex items-center justify-between gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hex-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+        aria-expanded={isOpen}
+        aria-controls={`${panelId}-content`}
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <div>
+          <p className="text-sm font-semibold text-hex-primary uppercase tracking-wide mb-2">Вопрос {index + 1}</p>
+          <h3 className="text-2xl font-bold text-hex-dark leading-tight">{item.question}</h3>
+        </div>
+        <div
+          className={`flex items-center justify-center w-11 h-11 rounded-full bg-white shadow-inner border border-gray-100 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
+          aria-hidden={true}
+        >
+          <ChevronDown className="text-hex-dark" />
+        </div>
+      </button>
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            key="content"
+            id={`${panelId}-content`}
+            role="region"
+            aria-live="polite"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="px-8 pb-8 lg:px-10 lg:pb-10"
+          >
+            <p className="text-lg text-hex-gray leading-relaxed">{item.answer}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+export default function FAQPage() {
 
   return (
     <Layout>
       <section
         id="faq"
-        className="relative pt-28 pb-32 lg:pt-32 lg:pb-40 bg-white overflow-hidden scroll-mt-32"
+        className="relative pt-28 pb-32 lg:pt-32 lg:pb-40 bg-white overflow-hidden scroll-mt-28 lg:scroll-mt-32"
       >
         <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:40px_40px] opacity-30"></div>
         <div className="absolute -top-32 -left-24 w-96 h-96 bg-hex-secondary/10 rounded-full blur-3xl"></div>
@@ -96,6 +144,7 @@ export default function FAQPage() {
           >
             <div className="absolute inset-0 opacity-40 bg-[radial-gradient(circle_at_top_left,#a78bfa_0,transparent_45%)]" />
             <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_bottom_right,#22d3ee_0,transparent_45%)]" />
+            <div className="absolute inset-x-8 top-4 h-px bg-gradient-to-r from-transparent via-hex-primary/40 to-transparent" />
             <div className="relative p-8 lg:p-12 grid md:grid-cols-[1.2fr_1fr] gap-8 lg:gap-12 items-center">
               <div className="space-y-4">
                 <p className="inline-flex items-center px-4 py-2 rounded-full bg-white/70 border border-hex-primary/20 text-hex-primary font-semibold tracking-wide shadow-glow">
@@ -107,6 +156,11 @@ export default function FAQPage() {
                 <p className="text-lg lg:text-xl text-hex-gray leading-relaxed">
                   Персонализированная 3D-примерка анализирует ткань, крой и ваши параметры, чтобы сразу показать посадку и подсказать точный размер.
                 </p>
+                <div className="flex flex-wrap gap-3">
+                  <span className="px-4 py-2 rounded-full bg-white/80 border border-hex-primary/20 text-hex-dark font-semibold shadow-card">Быстрая 3D-генерация</span>
+                  <span className="px-4 py-2 rounded-full bg-white/80 border border-hex-secondary/20 text-hex-dark font-semibold shadow-card">Персональный подбор размеров</span>
+                  <span className="px-4 py-2 rounded-full bg-white/80 border border-violet-200 text-hex-dark font-semibold shadow-card">Интеграция с маркетплейсами</span>
+                </div>
               </div>
               <div className="grid sm:grid-cols-3 gap-4">
                 {["99% персонализации", "-35% возвратов", "5 сек на первую примерку"].map((metric) => (
@@ -123,58 +177,9 @@ export default function FAQPage() {
           </motion.div>
 
           <div className="grid md:grid-cols-2 gap-6 lg:gap-8">
-            {faqs.map((item, index) => {
-              const isOpen = openIndex === index;
-              const contentId = `faq-panel-${index}`;
-
-              return (
-                <motion.div
-                  key={item.question}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: index * 0.05 }}
-                  className="group bg-gradient-to-br from-white via-white to-hex-bg border border-white/70 rounded-[1.75rem] shadow-card hover:shadow-2xl transition-all duration-500 overflow-hidden relative"
-                >
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-hex-primary via-violet-400 to-hex-secondary opacity-80"></div>
-                  <button
-                    type="button"
-                    className="w-full text-left px-8 py-6 lg:px-10 lg:py-7 flex items-center justify-between gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hex-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                    aria-expanded={isOpen}
-                    aria-controls={contentId}
-                    onClick={() => toggleIndex(index)}
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-hex-primary uppercase tracking-wide mb-2">Вопрос {index + 1}</p>
-                      <h3 className="text-2xl font-bold text-hex-dark leading-tight">{item.question}</h3>
-                    </div>
-                    <div
-                      className={`flex items-center justify-center w-11 h-11 rounded-full bg-white shadow-inner border border-gray-100 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
-                      aria-hidden={true}
-                    >
-                      <ChevronDown className="text-hex-dark" />
-                    </div>
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {isOpen && (
-                      <motion.div
-                        key="content"
-                        id={contentId}
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.3, ease: 'easeInOut' }}
-                        className="px-8 pb-8 lg:px-10 lg:pb-10"
-                      >
-                        <p className="text-lg text-hex-gray leading-relaxed">
-                          {item.answer}
-                        </p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              );
-            })}
+            {faqs.map((item, index) => (
+              <FAQCard key={item.question} item={item} index={index} />
+            ))}
           </div>
         </div>
       </section>

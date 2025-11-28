@@ -26,9 +26,13 @@ export function Layout({ children }: LayoutProps) {
           </nav>
 
           <div className="flex items-center gap-4">
-            <button className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors md:hidden">
+            <Link
+              to="/faq#faq"
+              className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors md:hidden"
+              aria-label="Перейти в раздел FAQ"
+            >
               <HelpCircle size={20} />
-            </button>
+            </Link>
             <button className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors">
               <User size={20} />
             </button>
