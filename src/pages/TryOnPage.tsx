@@ -304,7 +304,9 @@ export default function TryOnPage() {
               )}
 
               {/* Overlay Controls */}
-              <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0">
+              <div
+                className="absolute bottom-6 left-6 right-6 flex justify-between items-end gap-3 rounded-3xl px-3 py-3 bg-gradient-to-t from-black/10 via-black/0 to-transparent transition-all duration-300 opacity-100 translate-y-0 md:opacity-0 md:translate-y-4 md:group-hover:opacity-100 md:group-hover:translate-y-0"
+              >
                 <div className="flex gap-3">
                   <button
                     onClick={handleShare}
