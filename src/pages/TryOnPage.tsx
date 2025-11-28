@@ -220,7 +220,7 @@ export default function TryOnPage() {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="fixed top-6 right-6 z-20 bg-white shadow-xl border border-gray-100 rounded-2xl px-4 py-3 text-sm font-semibold text-hex-dark"
+          className="fixed right-6 top-20 sm:top-10 md:top-8 z-50 bg-white shadow-xl border border-gray-100 rounded-2xl px-4 py-3 text-sm font-semibold text-hex-dark"
         >
           {actionMessage}
         </motion.div>
