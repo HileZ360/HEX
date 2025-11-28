@@ -52,14 +52,14 @@ export default function FAQPage() {
     <Layout>
       <section
         id="faq"
-        className="relative py-28 lg:py-36 bg-white overflow-hidden scroll-mt-32"
+        className="relative pt-28 pb-32 lg:pt-32 lg:pb-40 bg-white overflow-hidden scroll-mt-32"
       >
         <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:40px_40px] opacity-30"></div>
         <div className="absolute -top-32 -left-24 w-96 h-96 bg-hex-secondary/10 rounded-full blur-3xl"></div>
         <div className="absolute -bottom-32 -right-24 w-[28rem] h-[28rem] bg-hex-primary/10 rounded-full blur-3xl"></div>
 
         <div className="container mx-auto px-6 relative z-10">
-          <div className="text-center max-w-3xl mx-auto mb-16 lg:mb-20">
+          <div className="text-center max-w-3xl mx-auto mb-14 lg:mb-16">
             <motion.span
               initial={{ opacity: 0, y: 10 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -87,6 +87,41 @@ export default function FAQPage() {
             </motion.p>
           </div>
 
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+            className="relative overflow-hidden rounded-[2rem] bg-gradient-to-r from-hex-primary/10 via-white to-hex-secondary/10 border border-white/80 shadow-2xl shadow-hex-primary/10 mb-10 lg:mb-14"
+          >
+            <div className="absolute inset-0 opacity-40 bg-[radial-gradient(circle_at_top_left,#a78bfa_0,transparent_45%)]" />
+            <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_bottom_right,#22d3ee_0,transparent_45%)]" />
+            <div className="relative p-8 lg:p-12 grid md:grid-cols-[1.2fr_1fr] gap-8 lg:gap-12 items-center">
+              <div className="space-y-4">
+                <p className="inline-flex items-center px-4 py-2 rounded-full bg-white/70 border border-hex-primary/20 text-hex-primary font-semibold tracking-wide shadow-glow">
+                  УТП HEX
+                </p>
+                <h2 className="text-3xl lg:text-4xl font-extrabold text-hex-dark leading-tight">
+                  HEX сокращает возвраты и даёт уверенность в каждой покупке одежды онлайн.
+                </h2>
+                <p className="text-lg lg:text-xl text-hex-gray leading-relaxed">
+                  Персонализированная 3D-примерка анализирует ткань, крой и ваши параметры, чтобы сразу показать посадку и подсказать точный размер.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-4">
+                {["99% персонализации", "-35% возвратов", "5 сек на первую примерку"].map((metric) => (
+                  <div
+                    key={metric}
+                    className="rounded-2xl bg-white/80 backdrop-blur-sm border border-white/70 shadow-card px-4 py-5 text-center"
+                  >
+                    <p className="text-sm font-semibold text-hex-primary uppercase tracking-wide">Результат</p>
+                    <p className="mt-2 text-lg font-bold text-hex-dark leading-tight">{metric}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+
           <div className="grid md:grid-cols-2 gap-6 lg:gap-8">
             {faqs.map((item, index) => {
               const isOpen = openIndex === index;
@@ -99,7 +134,7 @@ export default function FAQPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.05 }}
-                  className="group bg-hex-bg border border-white/70 rounded-[1.75rem] shadow-card hover:shadow-2xl transition-all duration-500 overflow-hidden relative"
+                  className="group bg-gradient-to-br from-white via-white to-hex-bg border border-white/70 rounded-[1.75rem] shadow-card hover:shadow-2xl transition-all duration-500 overflow-hidden relative"
                 >
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-hex-primary via-violet-400 to-hex-secondary opacity-80"></div>
                   <button
@@ -115,7 +150,7 @@ export default function FAQPage() {
                     </div>
                     <div
                       className={`flex items-center justify-center w-11 h-11 rounded-full bg-white shadow-inner border border-gray-100 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
-                      aria-hidden
+                      aria-hidden={true}
                     >
                       <ChevronDown className="text-hex-dark" />
                     </div>
