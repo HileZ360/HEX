@@ -46,12 +46,12 @@ export default function Modal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel 
-                className={clsx(
-                  "w-full sm:max-w-3xl lg:max-w-5xl max-h-[90vh] transform overflow-y-auto rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all",
+                <Dialog.Panel
+                  className={clsx(
+                  "w-full sm:max-w-3xl md:max-w-4xl lg:max-w-6xl max-h-[90vh] transform overflow-y-auto rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all",
                   className
-                )}
-              >
+                  )}
+                >
                 <div className="flex items-center justify-between mb-4">
                   {title && (
                     <Dialog.Title

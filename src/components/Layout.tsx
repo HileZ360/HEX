@@ -17,18 +17,22 @@ export function Layout({ children }: LayoutProps) {
           </Link>
           
           <nav className="hidden md:flex items-center gap-8">
-            <a href="#how-it-works" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
+            <Link to="/#how-it-works" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
               Как это работает
-            </a>
-            <a href="#faq" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
+            </Link>
+            <Link to="/faq" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
               FAQ
-            </a>
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">
-            <button className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors md:hidden">
+            <Link
+              to="/faq"
+              className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors md:hidden"
+              aria-label="Открыть FAQ"
+            >
               <HelpCircle size={20} />
-            </button>
+            </Link>
             <button className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors">
               <User size={20} />
             </button>
