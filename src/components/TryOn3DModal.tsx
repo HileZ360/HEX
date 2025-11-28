@@ -106,10 +106,15 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
         }),
       });
 
-      const data = await response.json();
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
 
       if (!response.ok) {
-        throw new Error(data?.message || 'Не удалось получить результат примерки.');
+        throw new Error(data?.message || 'Сервис 3D примерки временно недоступен. Попробуйте ещё раз позже.');
       }
 
       const nextSize = data?.recommendedSize ?? suggestedSize;
