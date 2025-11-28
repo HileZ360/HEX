@@ -139,11 +139,10 @@ export function TryOn3DModal({ isOpen, onClose, onComplete, suggestedSize, sugge
   };
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       title={step === 1 ? "Параметры тела" : "Результат примерки"}
-      className="max-w-3xl"
     >
       {/* Progress Bar */}
       <div className="mb-8">
