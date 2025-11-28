@@ -17,12 +17,12 @@ export function Layout({ children }: LayoutProps) {
           </Link>
           
           <nav className="hidden md:flex items-center gap-8">
-            <a href="#how-it-works" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
+            <Link to="/#how-it-works" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
               Как это работает
-            </a>
-            <a href="#faq" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
+            </Link>
+            <Link to="/faq#faq" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
               FAQ
-            </a>
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">
