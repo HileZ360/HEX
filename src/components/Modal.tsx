@@ -48,7 +48,7 @@ export default function Modal({
             >
               <Dialog.Panel 
                 className={clsx(
-                  "w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all",
+                  "w-full sm:max-w-3xl lg:max-w-5xl max-h-[90vh] transform overflow-y-auto rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all",
                   className
                 )}
               >
