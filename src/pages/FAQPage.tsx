@@ -44,6 +44,7 @@ const faqs: FAQItem[] = [
 function FAQCard({ item, index }: { item: FAQItem; index: number }) {
   const [isOpen, setIsOpen] = useState(index === 0);
   const panelId = useId();
+  const questionId = `${panelId}-label`;
 
   return (
     <motion.div
@@ -56,8 +57,9 @@ function FAQCard({ item, index }: { item: FAQItem; index: number }) {
     >
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-hex-primary via-violet-400 to-hex-secondary opacity-80"></div>
       <button
+        id={questionId}
         type="button"
-        className="w-full text-left px-8 py-6 lg:px-10 lg:py-7 flex items-center justify-between gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hex-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+        className="w-full text-left px-8 py-6 lg:px-10 lg:py-7 flex items-center justify-between gap-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hex-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white rounded-2xl"
         aria-expanded={isOpen}
         aria-controls={`${panelId}-content`}
         onClick={() => setIsOpen((prev) => !prev)}
@@ -79,6 +81,7 @@ function FAQCard({ item, index }: { item: FAQItem; index: number }) {
             key="content"
             id={`${panelId}-content`}
             role="region"
+            aria-labelledby={questionId}
             aria-live="polite"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
