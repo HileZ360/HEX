@@ -21,38 +21,38 @@ const tryOnHistory: TryOnItem[] = [
   {
     id: 'TRY-4821',
     date: '09.01.2025',
-    product: 'Oversize худи, черный',
+    product: 'Двубортный костюм, графит',
     type: '3D',
     status: 'success',
-    conversion: 78,
-    sizeHint: 'M · уверенность 0.84'
+    conversion: 82,
+    sizeHint: '48R · уверенность 0.91'
   },
   {
     id: 'TRY-4812',
     date: '08.01.2025',
-    product: 'Пуховик зимний, графит',
+    product: 'Кашемировое пальто, темно-синее',
     type: '2D',
     status: 'pending',
     conversion: 62,
-    sizeHint: 'L · уверенность 0.71'
+    sizeHint: '48 · уверенность 0.78'
   },
   {
     id: 'TRY-4799',
     date: '07.01.2025',
-    product: 'Джинсы straight fit',
+    product: 'Рубашка oxford slim',
     type: '2D',
     status: 'failed',
     conversion: 38,
-    sizeHint: '31/32'
+    sizeHint: '39/182'
   },
   {
     id: 'TRY-4784',
     date: '05.01.2025',
-    product: 'Кардиган из мериноса',
+    product: 'Трикотажный джемпер, антрацит',
     type: '3D',
     status: 'success',
-    conversion: 81,
-    sizeHint: 'M · уверенность 0.89'
+    conversion: 79,
+    sizeHint: '48 · уверенность 0.87'
   }
 ];
 
@@ -68,11 +68,15 @@ export default function AccountPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <p className="text-sm font-semibold text-hex-primary mb-2">Личный кабинет</p>
-            <h1 className="text-4xl lg:text-5xl font-bold text-hex-dark">Привет, Анна</h1>
-            <p className="text-lg text-hex-gray mt-2">Следи за примерками и конверсией в одном месте</p>
+            <h1 className="text-4xl lg:text-5xl font-bold text-hex-dark">Привет, Новиков А. А.</h1>
+            <p className="text-lg text-hex-gray mt-2">
+              Следи за примерками, мерками и конверсией в одном месте
+            </p>
           </div>
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="secondary" icon={<CalendarRange size={18} />}>Период</Button>
+            <Button variant="secondary" icon={<CalendarRange size={18} />}>
+              Период
+            </Button>
             <Button icon={<Sparkles size={18} />}>Запустить примерку</Button>
           </div>
         </div>
@@ -82,22 +86,26 @@ export default function AccountPage() {
             <div className="flex flex-col lg:flex-row gap-6 lg:items-center justify-between">
               <div className="flex items-center gap-4">
                 <img
-                  src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop"
+                  src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=420&auto=format&fit=crop&q=80"
                   alt="User avatar"
                   className="h-16 w-16 rounded-2xl object-cover shadow-md"
                 />
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <h2 className="text-2xl font-bold text-hex-dark">Анна Смирнова</h2>
+                    <h2 className="text-2xl font-bold text-hex-dark">Новиков А. А.</h2>
                     <Badge variant="primary">Pro</Badge>
                   </div>
-                  <p className="text-sm text-hex-gray">anna.smirnova@email.com</p>
-                  <p className="text-sm text-hex-gray">+7 (900) 123-45-67</p>
+                  <p className="text-sm text-hex-gray">novikov.aa@hex.app</p>
+                  <p className="text-sm text-hex-gray">+7 (916) 555-08-24</p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button variant="secondary" icon={<ShieldCheck size={18} />}>Безопасность</Button>
-                <Button variant="secondary" icon={<Bell size={18} />}>Уведомления</Button>
+                <Button variant="secondary" icon={<ShieldCheck size={18} />}>
+                  Безопасность
+                </Button>
+                <Button variant="secondary" icon={<Bell size={18} />}>
+                  Уведомления
+                </Button>
                 <Button icon={<Wand2 size={18} />}>Новый стиль</Button>
               </div>
             </div>
@@ -124,7 +132,7 @@ export default function AccountPage() {
                 icon={<CheckCircle2 size={18} />}
               />
               <StatCard
-                label="Теплые лиды"
+                label="С высокой конверсией"
                 value="18"
                 helper="Клиенты, у которых >70% конверсия"
                 trend={{ value: '+3', isPositive: true }}
@@ -149,7 +157,11 @@ export default function AccountPage() {
               </div>
 
               <div className="space-y-4">
-                {[{ label: 'Добавили в корзину', value: 74 }, { label: 'Оплачено', value: 61 }, { label: 'Возвраты', value: 4 }].map((step) => (
+                {[
+                  { label: 'Добавили в корзину', value: 74 },
+                  { label: 'Оплачено', value: 61 },
+                  { label: 'Возвраты', value: 4 }
+                ].map((step) => (
                   <div key={step.label} className="space-y-2">
                     <div className="flex items-center justify-between text-sm font-semibold text-hex-dark">
                       <span>{step.label}</span>
@@ -187,10 +199,10 @@ export default function AccountPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              <Input label="Имя" defaultValue="Анна" placeholder="Имя" />
-              <Input label="Фамилия" defaultValue="Смирнова" placeholder="Фамилия" />
-              <Input label="E-mail" defaultValue="anna.smirnova@email.com" type="email" />
-              <Input label="Телефон" defaultValue="+7 (900) 123-45-67" />
+              <Input label="Имя" defaultValue="Александр" placeholder="Имя" />
+              <Input label="Фамилия" defaultValue="Новиков" placeholder="Фамилия" />
+              <Input label="E-mail" defaultValue="novikov.aa@hex.app" type="email" />
+              <Input label="Телефон" defaultValue="+7 (916) 555-08-24" />
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -212,23 +224,28 @@ export default function AccountPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {[{
-                title: 'E-mail уведомления',
-                description: 'Результаты примерок, статусы оплаты',
-                checked: true
-              }, {
-                title: 'Push внутри сервиса',
-                description: 'Оповещения о новых размерах и скидках',
-                checked: true
-              }, {
-                title: 'Публичность профиля',
-                description: 'Показывать подборки при шаринге',
-                checked: false
-              }, {
-                title: 'Сбор аналитики',
-                description: 'Помогать улучшать рекомендации',
-                checked: true
-              }].map((item) => (
+              {[
+                {
+                  title: 'E-mail уведомления',
+                  description: 'Результаты примерок, статусы оплаты',
+                  checked: true
+                },
+                {
+                  title: 'Push внутри сервиса',
+                  description: 'Оповещения о новых размерах и скидках',
+                  checked: true
+                },
+                {
+                  title: 'Публичность профиля',
+                  description: 'Показывать подборки при шаринге',
+                  checked: false
+                },
+                {
+                  title: 'Сбор аналитики',
+                  description: 'Помогать улучшать рекомендации',
+                  checked: true
+                }
+              ].map((item) => (
                 <label
                   key={item.title}
                   className="flex items-start gap-3 p-4 rounded-2xl border border-gray-100 hover:border-hex-primary/30 transition"
