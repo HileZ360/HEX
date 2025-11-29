@@ -59,9 +59,11 @@ const tryOnHistory: TryOnItem[] = [
 export default function AccountPage() {
   const [isPlaceholderErrored, setIsPlaceholderErrored] = useState(false);
   const [isAvatarErrored, setIsAvatarErrored] = useState(false);
+
   const avatarSrc = isAvatarErrored
     ? 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=420&auto=format&fit=crop&q=80'
     : 'https://sun9-45.userapi.com/s/v1/ig2/JZN4_4XdMYTmpyXqWDy7RFn3eNVu4UkIV_iNpsGhhi7X28rNlE-TJFPHduED2gt5G6g7Uz-lc8_F7iklIIkIaESx.jpg?quality=95&as=160x240';
+
   const conversionAverage = useMemo(() => {
     const sum = tryOnHistory.reduce((acc, item) => acc + item.conversion, 0);
     return Math.round(sum / tryOnHistory.length);
@@ -74,39 +76,47 @@ export default function AccountPage() {
           <div>
             <p className="text-sm font-semibold text-hex-primary mb-2">Личный кабинет</p>
             <h1 className="text-4xl lg:text-5xl font-bold text-hex-dark">Привет, Новиков А. А.</h1>
-            <p className="text-lg text-hex-gray mt-2">Следи за примерками, мерками и конверсией в одном месте</p>
+            <p className="text-lg text-hex-gray mt-2">
+              Следи за примерками, мерками и конверсией в одном месте
+            </p>
           </div>
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="secondary" icon={<CalendarRange size={18} />}>Период</Button>
+            <Button variant="secondary" icon={<CalendarRange size={18} />}>
+              Период
+            </Button>
             <Button icon={<Sparkles size={18} />}>Запустить примерку</Button>
           </div>
         </div>
 
-          <AccountShell>
-            <section className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-3xl shadow-lg shadow-violet-500/5 p-6 lg:p-8 space-y-6">
-              <div className="flex flex-col lg:flex-row gap-6 lg:items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <img
-                    src={avatarSrc}
-                    alt="Аватар Новиков А. А."
-                    className="h-16 w-16 rounded-2xl object-cover shadow-md"
-                    onError={() => setIsAvatarErrored(true)}
-                  />
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <h2 className="text-2xl font-bold text-hex-dark">Новиков А. А.</h2>
-                      <Badge variant="primary">Pro</Badge>
-                    </div>
-                    <p className="text-sm text-hex-gray">novikov.aa@hex.app</p>
-                    <p className="text-sm text-hex-gray">+7 (916) 555-08-24</p>
+        <AccountShell>
+          <section className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-3xl shadow-lg shadow-violet-500/5 p-6 lg:p-8 space-y-6">
+            <div className="flex flex-col lg:flex-row gap-6 lg:items-center justify-between">
+              <div className="flex items-center gap-4">
+                <img
+                  src={avatarSrc}
+                  alt="Аватар Новиков А. А."
+                  className="h-16 w-16 rounded-2xl object-cover shadow-md"
+                  onError={() => setIsAvatarErrored(true)}
+                />
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="text-2xl font-bold text-hex-dark">Новиков А. А.</h2>
+                    <Badge variant="primary">Pro</Badge>
                   </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button variant="secondary" icon={<ShieldCheck size={18} />}>Безопасность</Button>
-                  <Button variant="secondary" icon={<Bell size={18} />}>Уведомления</Button>
-                  <Button icon={<Wand2 size={18} />}>Новый стиль</Button>
+                  <p className="text-sm text-hex-gray">novikov.aa@hex.app</p>
+                  <p className="text-sm text-hex-gray">+7 (916) 555-08-24</p>
                 </div>
               </div>
+              <div className="flex flex-wrap gap-3">
+                <Button variant="secondary" icon={<ShieldCheck size={18} />}>
+                  Безопасность
+                </Button>
+                <Button variant="secondary" icon={<Bell size={18} />}>
+                  Уведомления
+                </Button>
+                <Button icon={<Wand2 size={18} />}>Новый стиль</Button>
+              </div>
+            </div>
 
             <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 lg:gap-5">
               <StatCard
@@ -155,7 +165,11 @@ export default function AccountPage() {
               </div>
 
               <div className="space-y-4">
-                {[{ label: 'Добавили в корзину', value: 74 }, { label: 'Оплачено', value: 61 }, { label: 'Возвраты', value: 4 }].map((step) => (
+                {[
+                  { label: 'Добавили в корзину', value: 74 },
+                  { label: 'Оплачено', value: 61 },
+                  { label: 'Возвраты', value: 4 }
+                ].map((step) => (
                   <div key={step.label} className="space-y-2">
                     <div className="flex items-center justify-between text-sm font-semibold text-hex-dark">
                       <span>{step.label}</span>
@@ -182,7 +196,9 @@ export default function AccountPage() {
                   <div>
                     <p className="text-sm font-semibold text-hex-primary mb-1">Заглушка визуализации</p>
                     <h4 className="text-lg font-bold text-hex-dark">Витрина примерок</h4>
-                    <p className="text-sm text-hex-gray">Изображение от пользователя: отображаем как placeholder превью.</p>
+                    <p className="text-sm text-hex-gray">
+                      Изображение от пользователя: отображаем как placeholder превью.
+                    </p>
                   </div>
                 </div>
                 <div className="relative overflow-hidden rounded-2xl border border-gray-100 shadow-inner bg-gradient-to-br from-hex-bg to-white">
@@ -194,7 +210,9 @@ export default function AccountPage() {
                   />
                   {isPlaceholderErrored && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/90">
-                      <p className="text-sm font-semibold text-hex-dark">Не удалось загрузить заглушку</p>
+                      <p className="text-sm font-semibold text-hex-dark">
+                        Не удалось загрузить заглушку
+                      </p>
                       <p className="text-xs text-hex-gray">Показываем резервное превью.</p>
                       <img
                         src="https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80"
@@ -247,23 +265,28 @@ export default function AccountPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {[{
-                title: 'E-mail уведомления',
-                description: 'Результаты примерок, статусы оплаты',
-                checked: true
-              }, {
-                title: 'Push внутри сервиса',
-                description: 'Оповещения о новых размерах и скидках',
-                checked: true
-              }, {
-                title: 'Публичность профиля',
-                description: 'Показывать подборки при шаринге',
-                checked: false
-              }, {
-                title: 'Сбор аналитики',
-                description: 'Помогать улучшать рекомендации',
-                checked: true
-              }].map((item) => (
+              {[
+                {
+                  title: 'E-mail уведомления',
+                  description: 'Результаты примерок, статусы оплаты',
+                  checked: true
+                },
+                {
+                  title: 'Push внутри сервиса',
+                  description: 'Оповещения о новых размерах и скидках',
+                  checked: true
+                },
+                {
+                  title: 'Публичность профиля',
+                  description: 'Показывать подборки при шаринге',
+                  checked: false
+                },
+                {
+                  title: 'Сбор аналитики',
+                  description: 'Помогать улучшать рекомендации',
+                  checked: true
+                }
+              ].map((item) => (
                 <label
                   key={item.title}
                   className="flex items-start gap-3 p-4 rounded-2xl border border-gray-100 hover:border-hex-primary/30 transition"
