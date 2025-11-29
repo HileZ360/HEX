@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import FormData from 'form-data';
 import sharp from 'sharp';
 
@@ -8,7 +10,8 @@ process.env.TRY_ON_API_URL = 'https://tryon.local/api';
 process.env.TRY_ON_3D_API_URL = 'https://tryon.local/api/3d';
 process.env.TRY_ON_PROVIDER_TIMEOUT_MS = '100';
 
-const serverPromise = import('../server/index').then((mod) => mod.default);
+const serverModulePromise = import('../server/index');
+const serverPromise = serverModulePromise.then((mod) => mod.default);
 
 const buildTryOnForm = async ({
   garmentImageUrl,
@@ -210,6 +213,41 @@ test('returns compressed preview link for 2d try-on without base64 payload', asy
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test('maintains manifest integrity when previews persist concurrently', async () => {
+  const helpers = (await serverModulePromise).__previewTestHelpers;
+  assert.ok(helpers, 'preview helpers should be available in test mode');
+
+  await helpers.resetPreviewStorageForTest();
+
+  const controllerA = new AbortController();
+  const controllerB = new AbortController();
+  const bufferA = Buffer.from('concurrent-preview-a');
+  const bufferB = Buffer.from('concurrent-preview-b');
+
+  const [first, second] = await Promise.all([
+    helpers.persistPreviewForTest({ buffer: bufferA, signal: controllerA.signal }),
+    helpers.persistPreviewForTest({ buffer: bufferB, signal: controllerB.signal }),
+  ]);
+
+  const manifest = await helpers.readPreviewManifestForTest();
+  assert.equal(manifest.items.length, 2, 'both previews should be recorded');
+
+  const filenames = manifest.items.map((item) => item.filename);
+  assert.equal(new Set(filenames).size, 2, 'filenames must stay unique');
+
+  const { previewDir } = helpers;
+  assert.ok(previewDir, 'preview directory should be available');
+
+  const sizes = await Promise.all(
+    manifest.items.map((item) => fs.stat(path.join(previewDir!, item.filename)).then((stat) => stat.size)),
+  );
+  const expectedSizes = [bufferA.length, bufferB.length].sort((a, b) => a - b);
+
+  assert.ok(filenames.includes(first.filename));
+  assert.ok(filenames.includes(second.filename));
+  assert.deepEqual([...sizes].sort((a, b) => a - b), expectedSizes);
 });
 
 test('returns 504 when try-on provider exceeds timeout', async () => {

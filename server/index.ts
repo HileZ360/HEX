@@ -76,6 +76,7 @@ server.register(multipart, {
 let previewDirReady: Promise<void> | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
 let previewTokenSecret: Buffer | null = null;
+let previewManifestQueue: Promise<unknown> = Promise.resolve();
 const previewRateLimits = new Map<string, { count: number; resetAt: number }>();
 const productRateLimits = new Map<string, { count: number; resetAt: number }>();
 const productRepeatLimits = new Map<string, { count: number; resetAt: number }>();
@@ -278,6 +279,20 @@ type PreviewManifestEntry = { filename: string; createdAt: number; size: number 
 
 type PreviewManifest = { items: PreviewManifestEntry[] };
 
+const withPreviewManifestLock = async <T>(task: () => Promise<T>) => {
+  const currentTask = previewManifestQueue.then(task);
+  previewManifestQueue = currentTask.catch(() => undefined);
+  return currentTask;
+};
+
+const writeFileAtomic = async (filepath: string, data: Buffer | string) => {
+  const directory = path.dirname(filepath);
+  const tempPath = path.join(directory, `${path.basename(filepath)}.${randomUUID()}.tmp`);
+
+  await fs.writeFile(tempPath, data);
+  await fs.rename(tempPath, filepath);
+};
+
 const readPreviewManifest = async (): Promise<PreviewManifest> => {
   try {
     const content = await fs.readFile(PREVIEW_MANIFEST, 'utf8');
@@ -290,15 +305,15 @@ const readPreviewManifest = async (): Promise<PreviewManifest> => {
   return { items: [] };
 };
 
-const writePreviewManifest = (manifest: PreviewManifest) =>
-  fs.writeFile(PREVIEW_MANIFEST, JSON.stringify(manifest, null, 2));
+const writePreviewManifest = async (manifest: PreviewManifest) =>
+  writeFileAtomic(PREVIEW_MANIFEST, JSON.stringify(manifest, null, 2));
 
 const deletePreviewFile = async (entry: PreviewManifestEntry) => {
   const filepath = path.join(PREVIEW_DIR, entry.filename);
   await fs.rm(filepath, { force: true }).catch(() => undefined);
 };
 
-async function cleanupPreviews() {
+const cleanupPreviewsUnsafe = async () => {
   await ensurePreviewDir();
   const manifest = await readPreviewManifest();
   const now = Date.now();
@@ -323,9 +338,11 @@ async function cleanupPreviews() {
 
   await writePreviewManifest({ items: remaining });
   return remaining;
-}
+};
 
-const enforcePreviewBudget = async (options: { incomingSize: number }) => {
+const cleanupPreviews = () => withPreviewManifestLock(cleanupPreviewsUnsafe);
+
+const enforcePreviewBudgetUnsafe = async (options: { incomingSize: number }) => {
   const { incomingSize } = options;
   if (incomingSize > PREVIEW_MAX_TOTAL_BYTES) {
     throw new PreviewStorageError(
@@ -334,7 +351,7 @@ const enforcePreviewBudget = async (options: { incomingSize: number }) => {
     );
   }
 
-  const manifest = await cleanupPreviews();
+  const manifest = await cleanupPreviewsUnsafe();
   const sorted = [...manifest].sort((a, b) => a.createdAt - b.createdAt);
 
   let totalSize = sorted.reduce((acc, item) => acc + item.size, 0);
@@ -359,6 +376,9 @@ const enforcePreviewBudget = async (options: { incomingSize: number }) => {
   await writePreviewManifest({ items: itemsToKeep });
   return itemsToKeep;
 };
+
+const enforcePreviewBudget = (options: { incomingSize: number }) =>
+  withPreviewManifestLock(() => enforcePreviewBudgetUnsafe(options));
 
 const normalizeSize = (value?: string) => {
   const normalized = value?.trim().toUpperCase();
@@ -712,19 +732,23 @@ const persistPreview = async ({ buffer, signal }: { buffer: Buffer; signal: Abor
   throwIfAborted(signal);
   await ensurePreviewDir();
 
-  const itemsToKeep = await enforcePreviewBudget({ incomingSize: buffer.length });
+  return withPreviewManifestLock(async () => {
+    throwIfAborted(signal);
 
-  const id = randomUUID();
-  const filename = `${id}.jpg`;
-  const filepath = path.join(PREVIEW_DIR, filename);
-  const createdAt = Date.now();
+    const itemsToKeep = await enforcePreviewBudgetUnsafe({ incomingSize: buffer.length });
 
-  await fs.writeFile(filepath, buffer);
-  await writePreviewManifest({
-    items: [...itemsToKeep, { filename, createdAt, size: buffer.length }],
+    const id = randomUUID();
+    const filename = `${id}.jpg`;
+    const filepath = path.join(PREVIEW_DIR, filename);
+    const createdAt = Date.now();
+
+    await writeFileAtomic(filepath, buffer);
+    await writePreviewManifest({
+      items: [...itemsToKeep, { filename, createdAt, size: buffer.length }],
+    });
+
+    return { id, filepath, filename } as const;
   });
-
-  return { id, filepath, filename } as const;
 };
 
 const buildPreviewUrl = (filename: string) => {
@@ -1123,6 +1147,20 @@ server.post('/api/tryon/3d', async (request, reply) => {
     reply.code(500).send({ message: 'Сервис 3D-примерки временно недоступен. Попробуйте позже.' });
   }
 });
+
+export const __previewTestHelpers =
+  process.env.NODE_ENV === 'test'
+    ? {
+        persistPreviewForTest: persistPreview,
+        readPreviewManifestForTest: () => withPreviewManifestLock(() => readPreviewManifest()),
+        resetPreviewStorageForTest: async () => {
+          await fs.rm(PREVIEW_DIR, { recursive: true, force: true });
+          previewDirReady = null;
+          previewManifestQueue = Promise.resolve();
+        },
+        previewDir: PREVIEW_DIR,
+      }
+    : undefined;
 
 const PORT = Number(process.env.PORT) || 4000;
 
