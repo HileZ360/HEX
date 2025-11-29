@@ -23,6 +23,9 @@ export function Layout({ children }: LayoutProps) {
             <Link to="/faq#faq" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
               FAQ
             </Link>
+            <Link to="/account" className="text-sm font-medium text-hex-gray hover:text-hex-primary transition-colors">
+              Личный кабинет
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">
@@ -33,9 +36,13 @@ export function Layout({ children }: LayoutProps) {
             >
               <HelpCircle size={20} />
             </Link>
-            <button className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors">
+            <Link
+              to="/account"
+              className="p-2 text-hex-gray hover:text-hex-primary hover:bg-hex-primary/5 rounded-full transition-colors"
+              aria-label="Перейти в личный кабинет"
+            >
               <User size={20} />
-            </button>
+            </Link>
           </div>
         </div>
       </header>
