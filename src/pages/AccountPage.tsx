@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -57,6 +57,8 @@ const tryOnHistory: TryOnItem[] = [
 ];
 
 export default function AccountPage() {
+  const [isPlaceholderErrored, setIsPlaceholderErrored] = useState(false);
+
   const conversionAverage = useMemo(() => {
     const sum = tryOnHistory.reduce((acc, item) => acc + item.conversion, 0);
     return Math.round(sum / tryOnHistory.length);
@@ -132,7 +134,7 @@ export default function AccountPage() {
                 icon={<CheckCircle2 size={18} />}
               />
               <StatCard
-                label="С высокой конверсией"
+                label="Клиенты с высокой конверсией"
                 value="18"
                 helper="Клиенты, у которых >70% конверсия"
                 trend={{ value: '+3', isPositive: true }}
@@ -182,6 +184,39 @@ export default function AccountPage() {
                   <li>Сегментировать пуши по размерам — меньше ошибок и возвратов.</li>
                 </ul>
               </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-hex-primary mb-1">Заглушка визуализации</p>
+                    <h4 className="text-lg font-bold text-hex-dark">Витрина примерок</h4>
+                    <p className="text-sm text-hex-gray">
+                      Изображение от пользователя: отображаем как placeholder превью.
+                    </p>
+                  </div>
+                </div>
+                <div className="relative overflow-hidden rounded-2xl border border-gray-100 shadow-inner bg-gradient-to-br from-hex-bg to-white">
+                  <img
+                    src="blob:https://web.telegram.org/86a1573b-1cb9-46c2-b48d-75ecaa5d5a4a"
+                    alt="Пользовательская заглушка примерки"
+                    className="w-full h-56 object-cover"
+                    onError={() => setIsPlaceholderErrored(true)}
+                  />
+                  {isPlaceholderErrored && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/90">
+                      <p className="text-sm font-semibold text-hex-dark">
+                        Не удалось загрузить заглушку
+                      </p>
+                      <p className="text-xs text-hex-gray">Показываем резервное превью.</p>
+                      <img
+                        src="https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800&auto=format&fit=crop&q=80"
+                        alt="Резервное превью примерки"
+                        className="w-full h-44 object-cover rounded-xl border border-gray-100 shadow-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
             </section>
           </div>
 
@@ -189,7 +224,7 @@ export default function AccountPage() {
             id="profile"
             className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-3xl shadow-lg shadow-violet-500/5 p-6 lg:p-8 space-y-6"
           >
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify между gap-4">
               <div>
                 <p className="text-sm font-semibold text-hex-primary mb-1">Профиль</p>
                 <h3 className="text-2xl font-bold text-hex-dark">Данные пользователя</h3>
