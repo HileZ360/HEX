@@ -12,10 +12,10 @@ export const ALLOWED_MARKETPLACE_DOMAINS = marketplaceAdapters.flatMap((adapter)
 export const isAllowedMarketplace = (hostname: string) =>
   marketplaceAdapters.some((adapter) => adapter.domains.some((domain) => hostMatchesDomain(hostname, domain)));
 
-export const fetchMarketplaceProduct = async (url: URL, logger?: ParseLogger) => {
+export const fetchMarketplaceProduct = async (url: URL, logger?: ParseLogger, signal?: AbortSignal) => {
   const adapter = findAdapterByHostname(url.hostname);
   if (!adapter) return null;
-  return adapter.fetchProduct(url, logger);
+  return adapter.fetchProduct(url, logger, signal);
 };
 
 export const fetchWithRedirects = async ({

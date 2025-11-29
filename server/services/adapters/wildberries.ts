@@ -47,15 +47,29 @@ const toParsedProduct = (product: any, targetUrl: URL): ParsedProduct => {
 
 export const wildberriesAdapter: MarketplaceAdapter = {
   domains: ['wildberries.ru'],
-  async fetchProduct(targetUrl, logger) {
+  async fetchProduct(targetUrl, logger, signal) {
     const log = resolveLogger(logger);
     const article = targetUrl.pathname.match(/(\d+)/g)?.pop();
     if (!article) return null;
 
     const apiUrl = `https://card.wb.ru/cards/v2/detail?dest=-1257786&nm=${article}`;
     const controller = new AbortController();
+    const onAbort = () => controller.abort();
     const timeoutMs = 7000;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeout);
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     try {
       const response = await fetch(apiUrl, {
@@ -73,9 +87,13 @@ export const wildberriesAdapter: MarketplaceAdapter = {
       return toParsedProduct(product, targetUrl);
     } catch (error: any) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
-          context: { url: apiUrl, article },
-        });
+        if (timedOut) {
+          throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
+            context: { url: apiUrl, article },
+          });
+        }
+
+        throw error;
       }
 
       if (error instanceof ProductFetchError) {
@@ -87,6 +105,9 @@ export const wildberriesAdapter: MarketplaceAdapter = {
         context: { url: apiUrl, article },
       });
     } finally {
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
       clearTimeout(timeout);
     }
   },

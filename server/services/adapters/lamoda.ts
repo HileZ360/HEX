@@ -111,11 +111,25 @@ const parseLamodaProduct = (html: string, targetUrl: URL, logger?: ReturnType<ty
 
 export const lamodaAdapter: MarketplaceAdapter = {
   domains: ['lamoda.ru'],
-  async fetchProduct(targetUrl, logger) {
+  async fetchProduct(targetUrl, logger, signal) {
     const log = resolveLogger(logger);
     const controller = new AbortController();
+    const onAbort = () => controller.abort();
     const timeoutMs = 7000;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeout);
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     try {
       const response = await fetch(targetUrl, {
@@ -135,9 +149,13 @@ export const lamodaAdapter: MarketplaceAdapter = {
       return product;
     } catch (error: any) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
-          context: { url: targetUrl.href },
-        });
+        if (timedOut) {
+          throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
+            context: { url: targetUrl.href },
+          });
+        }
+
+        throw error;
       }
 
       if (error instanceof ProductFetchError) {
@@ -149,6 +167,9 @@ export const lamodaAdapter: MarketplaceAdapter = {
         context: { url: targetUrl.href },
       });
     } finally {
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
       clearTimeout(timeout);
     }
   },

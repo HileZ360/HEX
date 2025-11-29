@@ -250,12 +250,49 @@ const resolveProductImageUrl = (productId: string, index = 0) => {
   return entry.images[index] ?? entry.images[0] ?? null;
 };
 
-const acquireProductParseSlot = () =>
+const acquireProductParseSlot = ({ signal }: { signal?: AbortSignal } = {}) =>
   new Promise<() => void>((resolve, reject) => {
+    let settled = false;
+
+    const cleanupAbortListener = () => signal?.removeEventListener('abort', onAbort);
+
+    const resolveOnce = (value: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanupAbortListener();
+      resolve(value);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanupAbortListener();
+      reject(error);
+    };
+
+    const onAbort = () => {
+      const queueIndex = productParseQueue.indexOf(tryAcquire);
+      if (queueIndex !== -1) {
+        productParseQueue.splice(queueIndex, 1);
+      }
+      rejectOnce(abortError('Product parse aborted'));
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     const tryAcquire = () => {
+      if (settled) return;
+
       if (activeProductParses < PRODUCT_PARSE_MAX_CONCURRENCY) {
         activeProductParses += 1;
-        resolve(() => {
+        resolveOnce(() => {
           activeProductParses -= 1;
           const next = productParseQueue.shift();
           if (next) next();
@@ -264,7 +301,7 @@ const acquireProductParseSlot = () =>
       }
 
       if (productParseQueue.length >= PRODUCT_PARSE_QUEUE_LIMIT) {
-        reject(new Error('Product parse queue limit exceeded'));
+        rejectOnce(new Error('Product parse queue limit exceeded'));
         return;
       }
 
@@ -901,66 +938,73 @@ server.get('/api/product/parse', async (request, reply) => {
   const url = (request.query as { url?: string }).url;
   const clientKey = getClientIdentifier(request);
 
-  if (!url) {
-    reply.code(400).send({ error: 'Missing url query param' });
-    return;
-  }
-
-  if (url.length > PRODUCT_URL_MAX_LENGTH) {
-    request.log.warn({ urlLength: url.length, clientKey }, 'Product parse blocked: url too long');
-    reply.code(429).send({ error: 'Ссылка слишком длинная. Попробуйте другой адрес товара.' });
-    return;
-  }
-
-  const productRateLimit = applyProductRateLimit(clientKey);
-  if (!productRateLimit.allowed) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((productRateLimit.retryAt - Date.now()) / 1000));
-    reply.header('Retry-After', String(retryAfterSeconds));
-    request.log.warn({ clientKey, ip: request.ip }, 'Product parse rate limit exceeded');
-    reply.code(429).send({ error: 'Слишком много запросов. Попробуйте позже.' });
-    return;
-  }
-
-  const productRepeatLimit = applyProductRepeatLimit(clientKey, url);
-  if (!productRepeatLimit.allowed) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((productRepeatLimit.retryAt - Date.now()) / 1000));
-    reply.header('Retry-After', String(retryAfterSeconds));
-    request.log.warn({ clientKey, url }, 'Product parse blocked due to repeated URL');
-    reply
-      .code(429)
-      .send({ error: 'Слишком частые запросы одного и того же товара. Попробуйте позже.' });
-    return;
-  }
-
-  let parsedUrl: URL;
+  const abortController = new AbortController();
+  const onRequestClosed = () => abortController.abort();
+  request.raw.on('aborted', onRequestClosed);
+  request.raw.on('close', onRequestClosed);
 
   try {
-    parsedUrl = new URL(url);
-  } catch {
-    reply.code(400).send({ error: 'Invalid url query param' });
-    return;
-  }
+    if (!url) {
+      reply.code(400).send({ error: 'Missing url query param' });
+      return;
+    }
 
-  const allowedDomains = ALLOWED_MARKETPLACE_DOMAINS;
-  const isHttps = parsedUrl.protocol === 'https:';
-  const isAllowedDomain = allowedDomains.some(
-    (domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`),
-  );
+    if (url.length > PRODUCT_URL_MAX_LENGTH) {
+      request.log.warn({ urlLength: url.length, clientKey }, 'Product parse blocked: url too long');
+      reply.code(429).send({ error: 'Ссылка слишком длинная. Попробуйте другой адрес товара.' });
+      return;
+    }
 
-  if (!isHttps || !isAllowedDomain) {
-    const allowedList = ALLOWED_MARKETPLACE_DOMAINS.join(', ');
-    reply
-      .code(400)
-      .send({ error: `Неподдерживаемый источник товара. Используйте HTTPS-ссылки ${allowedList}.` });
-    return;
-  }
+    const productRateLimit = applyProductRateLimit(clientKey);
+    if (!productRateLimit.allowed) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((productRateLimit.retryAt - Date.now()) / 1000));
+      reply.header('Retry-After', String(retryAfterSeconds));
+      request.log.warn({ clientKey, ip: request.ip }, 'Product parse rate limit exceeded');
+      reply.code(429).send({ error: 'Слишком много запросов. Попробуйте позже.' });
+      return;
+    }
 
-  try {
+    const productRepeatLimit = applyProductRepeatLimit(clientKey, url);
+    if (!productRepeatLimit.allowed) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((productRepeatLimit.retryAt - Date.now()) / 1000));
+      reply.header('Retry-After', String(retryAfterSeconds));
+      request.log.warn({ clientKey, url }, 'Product parse blocked due to repeated URL');
+      reply
+        .code(429)
+        .send({ error: 'Слишком частые запросы одного и того же товара. Попробуйте позже.' });
+      return;
+    }
+
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      reply.code(400).send({ error: 'Invalid url query param' });
+      return;
+    }
+
+    const allowedDomains = ALLOWED_MARKETPLACE_DOMAINS;
+    const isHttps = parsedUrl.protocol === 'https:';
+    const isAllowedDomain = allowedDomains.some(
+      (domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`),
+    );
+
+    if (!isHttps || !isAllowedDomain) {
+      const allowedList = ALLOWED_MARKETPLACE_DOMAINS.join(', ');
+      reply
+        .code(400)
+        .send({ error: `Неподдерживаемый источник товара. Используйте HTTPS-ссылки ${allowedList}.` });
+      return;
+    }
+
     let releaseSlot: (() => void) | undefined;
 
     try {
-      releaseSlot = await acquireProductParseSlot();
-    } catch (error) {
+      releaseSlot = await acquireProductParseSlot({ signal: abortController.signal });
+    } catch (error: any) {
+      if (abortController.signal.aborted || error?.name === 'AbortError') return;
+
       request.log.warn({ clientKey, err: error }, 'Product parse queue is full');
       reply
         .code(429)
@@ -969,7 +1013,7 @@ server.get('/api/product/parse', async (request, reply) => {
     }
 
     try {
-      const parsedProduct = await parseProductFromUrl(url, request.log);
+      const parsedProduct = await parseProductFromUrl(url, request.log, abortController.signal);
       const productId = rememberParsedProduct(parsedProduct.images ?? []);
 
       reply.send({
@@ -992,6 +1036,11 @@ server.get('/api/product/parse', async (request, reply) => {
       releaseSlot?.();
     }
   } catch (error: any) {
+    if (abortController.signal.aborted || error?.name === 'AbortError') {
+      request.log.info({ clientKey }, 'Product parse aborted');
+      return;
+    }
+
     const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     const message =
       statusCode === 504
@@ -1002,6 +1051,9 @@ server.get('/api/product/parse', async (request, reply) => {
     request.log.error({ err: error, context, cause: error?.cause }, 'Product parsing failed');
 
     reply.code(statusCode).send({ error: message });
+  } finally {
+    request.raw.off('aborted', onRequestClosed);
+    request.raw.off('close', onRequestClosed);
   }
 });
 
