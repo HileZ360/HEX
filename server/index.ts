@@ -83,6 +83,21 @@ const productParseQueue: Array<() => void> = [];
 let activeProductParses = 0;
 const parsedProducts = new Map<string, { images: string[]; createdAt: number }>();
 
+const cleanupRateLimitMap = (map: Map<string, { count: number; resetAt: number }>) => {
+  const now = Date.now();
+  for (const [key, entry] of map.entries()) {
+    if (entry.resetAt <= now) {
+      map.delete(key);
+    }
+  }
+};
+
+const cleanupRateLimits = () => {
+  cleanupRateLimitMap(previewRateLimits);
+  cleanupRateLimitMap(productRateLimits);
+  cleanupRateLimitMap(productRepeatLimits);
+};
+
 const getPreviewTokenSecret = () => {
   if (process.env.PREVIEW_TOKEN_SECRET) {
     return Buffer.from(process.env.PREVIEW_TOKEN_SECRET, 'utf8');
@@ -248,6 +263,11 @@ async function ensurePreviewDir() {
       cleanupPreviews().catch((error) => {
         server.log.error({ err: error }, 'Failed to run scheduled preview cleanup');
       });
+      try {
+        cleanupRateLimits();
+      } catch (error) {
+        server.log.error({ err: error }, 'Failed to run scheduled rate-limit cleanup');
+      }
     }, PREVIEW_CLEANUP_INTERVAL_MS);
     cleanupTimer.unref?.();
   }
