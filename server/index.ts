@@ -73,8 +73,13 @@ server.register(multipart, {
   throwFileSizeLimit: true,
 });
 
+server.addHook('onReady', async () => {
+  scheduleRateLimitCleanup();
+});
+
 let previewDirReady: Promise<void> | null = null;
-let cleanupTimer: NodeJS.Timeout | null = null;
+let previewCleanupTimer: NodeJS.Timeout | null = null;
+let rateLimitCleanupTimer: NodeJS.Timeout | null = null;
 let previewTokenSecret: Buffer | null = null;
 let previewManifestQueue: Promise<unknown> = Promise.resolve();
 const previewRateLimits = new Map<string, { count: number; resetAt: number }>();
@@ -97,6 +102,20 @@ const cleanupRateLimits = () => {
   cleanupRateLimitMap(previewRateLimits);
   cleanupRateLimitMap(productRateLimits);
   cleanupRateLimitMap(productRepeatLimits);
+};
+
+const scheduleRateLimitCleanup = () => {
+  if (rateLimitCleanupTimer) return;
+
+  rateLimitCleanupTimer = setInterval(() => {
+    try {
+      cleanupRateLimits();
+    } catch (error) {
+      server.log.error({ err: error }, 'Failed to run scheduled rate-limit cleanup');
+    }
+  }, PREVIEW_CLEANUP_INTERVAL_MS);
+
+  rateLimitCleanupTimer.unref?.();
 };
 
 const getPreviewTokenSecret = () => {
@@ -259,18 +278,13 @@ async function ensurePreviewDir() {
   if (!previewDirReady) {
     previewDirReady = fs.mkdir(PREVIEW_DIR, { recursive: true }).then(() => undefined);
   }
-  if (!cleanupTimer) {
-    cleanupTimer = setInterval(() => {
+  if (!previewCleanupTimer) {
+    previewCleanupTimer = setInterval(() => {
       cleanupPreviews().catch((error) => {
         server.log.error({ err: error }, 'Failed to run scheduled preview cleanup');
       });
-      try {
-        cleanupRateLimits();
-      } catch (error) {
-        server.log.error({ err: error }, 'Failed to run scheduled rate-limit cleanup');
-      }
     }, PREVIEW_CLEANUP_INTERVAL_MS);
-    cleanupTimer.unref?.();
+    previewCleanupTimer.unref?.();
   }
   return previewDirReady;
 }
