@@ -10,9 +10,23 @@ import type { ParseLogger } from './logger.js';
 
 export { ALLOWED_MARKETPLACE_DOMAINS } from './services/marketplace.js';
 
-export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger): Promise<ParsedProduct> {
+const abortError = (message: string) => {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+};
+
+export async function parseProductFromUrl(
+  inputUrl: string,
+  logger?: ParseLogger,
+  signal?: AbortSignal,
+): Promise<ParsedProduct> {
   const targetUrl = new URL(inputUrl);
   const redirectContext = { url: targetUrl.href };
+
+  if (signal?.aborted) {
+    throw abortError('Product parse aborted');
+  }
 
   if (targetUrl.protocol !== 'https:' || !isAllowedMarketplace(targetUrl.hostname)) {
     throw new ProductFetchError(
@@ -22,7 +36,7 @@ export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger
     );
   }
 
-  const marketplaceProduct = await fetchMarketplaceProduct(targetUrl, logger);
+  const marketplaceProduct = await fetchMarketplaceProduct(targetUrl, logger, signal);
   if (marketplaceProduct) {
     return marketplaceProduct;
   }
@@ -34,8 +48,22 @@ export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger
   }
 
   const controller = new AbortController();
+  const onAbort = () => controller.abort();
   const timeoutMs = 7000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timeout);
+      throw abortError('Product parse aborted');
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
 
   try {
     const { html, finalUrl } = await fetchWithRedirects({
@@ -46,9 +74,13 @@ export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger
     return parseHtmlProduct(html, finalUrl, logger);
   } catch (error: any) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
-        context: redirectContext,
-      });
+      if (timedOut) {
+        throw new ProductFetchError('Превышено время ожидания загрузки товара', 504, {
+          context: redirectContext,
+        });
+      }
+
+      throw error;
     }
 
     if (error instanceof ProductFetchError) {
@@ -60,6 +92,9 @@ export async function parseProductFromUrl(inputUrl: string, logger?: ParseLogger
       context: redirectContext,
     });
   } finally {
+    if (signal) {
+      signal.removeEventListener('abort', onAbort);
+    }
     clearTimeout(timeout);
   }
 }
