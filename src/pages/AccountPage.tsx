@@ -58,6 +58,11 @@ const tryOnHistory: TryOnItem[] = [
 
 export default function AccountPage() {
   const [isPlaceholderErrored, setIsPlaceholderErrored] = useState(false);
+  const [isAvatarErrored, setIsAvatarErrored] = useState(false);
+
+  const avatarSrc = isAvatarErrored
+    ? 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=420&auto=format&fit=crop&q=80'
+    : 'https://sun9-45.userapi.com/s/v1/ig2/JZN4_4XdMYTmpyXqWDy7RFn3eNVu4UkIV_iNpsGhhi7X28rNlE-TJFPHduED2gt5G6g7Uz-lc8_F7iklIIkIaESx.jpg?quality=95&as=160x240';
 
   const conversionAverage = useMemo(() => {
     const sum = tryOnHistory.reduce((acc, item) => acc + item.conversion, 0);
@@ -88,9 +93,10 @@ export default function AccountPage() {
             <div className="flex flex-col lg:flex-row gap-6 lg:items-center justify-between">
               <div className="flex items-center gap-4">
                 <img
-                  src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=420&auto=format&fit=crop&q=80"
-                  alt="User avatar"
+                  src={avatarSrc}
+                  alt="Аватар Новиков А. А."
                   className="h-16 w-16 rounded-2xl object-cover shadow-md"
+                  onError={() => setIsAvatarErrored(true)}
                 />
                 <div>
                   <div className="flex items-center gap-2 mb-1">
@@ -134,7 +140,7 @@ export default function AccountPage() {
                 icon={<CheckCircle2 size={18} />}
               />
               <StatCard
-                label="Клиенты с высокой конверсией"
+                label="Теплые лиды"
                 value="18"
                 helper="Клиенты, у которых >70% конверсия"
                 trend={{ value: '+3', isPositive: true }}
@@ -224,7 +230,7 @@ export default function AccountPage() {
             id="profile"
             className="bg-white/80 backdrop-blur-md border border-gray-100 rounded-3xl shadow-lg shadow-violet-500/5 p-6 lg:p-8 space-y-6"
           >
-            <div className="flex items-start justify между gap-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold text-hex-primary mb-1">Профиль</p>
                 <h3 className="text-2xl font-bold text-hex-dark">Данные пользователя</h3>
