@@ -69,10 +69,14 @@ export default function AccountPage() {
           <div>
             <p className="text-sm font-semibold text-hex-primary mb-2">Личный кабинет</p>
             <h1 className="text-4xl lg:text-5xl font-bold text-hex-dark">Привет, Новиков А. А.</h1>
-            <p className="text-lg text-hex-gray mt-2">Следи за примерками, мерками и конверсией в одном месте</p>
+            <p className="text-lg text-hex-gray mt-2">
+              Следи за примерками, мерками и конверсией в одном месте
+            </p>
           </div>
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="secondary" icon={<CalendarRange size={18} />}>Период</Button>
+            <Button variant="secondary" icon={<CalendarRange size={18} />}>
+              Период
+            </Button>
             <Button icon={<Sparkles size={18} />}>Запустить примерку</Button>
           </div>
         </div>
@@ -96,8 +100,12 @@ export default function AccountPage() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button variant="secondary" icon={<ShieldCheck size={18} />}>Безопасность</Button>
-                <Button variant="secondary" icon={<Bell size={18} />}>Уведомления</Button>
+                <Button variant="secondary" icon={<ShieldCheck size={18} />}>
+                  Безопасность
+                </Button>
+                <Button variant="secondary" icon={<Bell size={18} />}>
+                  Уведомления
+                </Button>
                 <Button icon={<Wand2 size={18} />}>Новый стиль</Button>
               </div>
             </div>
@@ -124,7 +132,7 @@ export default function AccountPage() {
                 icon={<CheckCircle2 size={18} />}
               />
               <StatCard
-                label="Теплые лиды"
+                label="С высокой конверсией"
                 value="18"
                 helper="Клиенты, у которых >70% конверсия"
                 trend={{ value: '+3', isPositive: true }}
@@ -149,7 +157,11 @@ export default function AccountPage() {
               </div>
 
               <div className="space-y-4">
-                {[{ label: 'Добавили в корзину', value: 74 }, { label: 'Оплачено', value: 61 }, { label: 'Возвраты', value: 4 }].map((step) => (
+                {[
+                  { label: 'Добавили в корзину', value: 74 },
+                  { label: 'Оплачено', value: 61 },
+                  { label: 'Возвраты', value: 4 }
+                ].map((step) => (
                   <div key={step.label} className="space-y-2">
                     <div className="flex items-center justify-between text-sm font-semibold text-hex-dark">
                       <span>{step.label}</span>
@@ -212,23 +224,28 @@ export default function AccountPage() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {[{
-                title: 'E-mail уведомления',
-                description: 'Результаты примерок, статусы оплаты',
-                checked: true
-              }, {
-                title: 'Push внутри сервиса',
-                description: 'Оповещения о новых размерах и скидках',
-                checked: true
-              }, {
-                title: 'Публичность профиля',
-                description: 'Показывать подборки при шаринге',
-                checked: false
-              }, {
-                title: 'Сбор аналитики',
-                description: 'Помогать улучшать рекомендации',
-                checked: true
-              }].map((item) => (
+              {[
+                {
+                  title: 'E-mail уведомления',
+                  description: 'Результаты примерок, статусы оплаты',
+                  checked: true
+                },
+                {
+                  title: 'Push внутри сервиса',
+                  description: 'Оповещения о новых размерах и скидках',
+                  checked: true
+                },
+                {
+                  title: 'Публичность профиля',
+                  description: 'Показывать подборки при шаринге',
+                  checked: false
+                },
+                {
+                  title: 'Сбор аналитики',
+                  description: 'Помогать улучшать рекомендации',
+                  checked: true
+                }
+              ].map((item) => (
                 <label
                   key={item.title}
                   className="flex items-start gap-3 p-4 rounded-2xl border border-gray-100 hover:border-hex-primary/30 transition"
